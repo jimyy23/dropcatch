@@ -1,0 +1,16 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="titlebar"><h1>Events</h1>
+<nav class="filters-inline">
+  <a href="/events" class="{{if eq $d.Level ""}}on{{end}}">all</a>
+  <a href="/events?level=alert" class="{{if eq $d.Level "alert"}}on{{end}}">alerts</a>
+  <a href="/events?level=warn" class="{{if eq $d.Level "warn"}}on{{end}}">warnings</a>
+  <a href="/events?level=info" class="{{if eq $d.Level "info"}}on{{end}}">info</a>
+</nav></div>
+{{template "eventtable" $d.Events}}
+{{if gt $d.Pages 1}}<div class="pager">
+  {{if gt $d.Page 1}}<a class="btn" href="{{query .Q "page" (printf "%d" (sub $d.Page 1))}}">‹ prev</a>{{end}}
+  <span>page {{$d.Page}} / {{$d.Pages}}</span>
+  {{if lt $d.Page $d.Pages}}<a class="btn" href="{{query .Q "page" (printf "%d" (add $d.Page 1))}}">next ›</a>{{end}}
+</div>{{end}}
+{{end}}

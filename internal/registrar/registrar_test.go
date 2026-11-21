@@ -1,0 +1,237 @@
+package registrar
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"dropcatch/internal/config"
+)
+
+func TestDynadotSignatureAndOutcomes(t *testing.T) {
+	var gotSig, gotReq, gotBody, gotPath string
+	status := 409
+	body := `{"code":409,"message":"Conflict","error":{"description":"The domain is not available"}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSig, gotReq, gotPath = r.Header.Get("X-Signature"), r.Header.Get("X-Request-ID"), r.URL.RequestURI()
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	d := NewDynadot(config.Dynadot{APIKey: "KEY", APISecret: "SECRET", ContactID: "123", Privacy: "full", Currency: "usd"}, config.Contact{}, false)
+	d.base = srv.URL
+
+	res := d.Register(context.Background(), "example.com")
+	if res.Outcome != Unavailable {
+		t.Fatalf("409 not available => %s", res.Outcome)
+	}
+	m := hmac.New(sha256.New, []byte("SECRET"))
+	m.Write([]byte("KEY\n" + gotPath + "\n" + gotReq + "\n" + gotBody))
+	if gotSig != base64.StdEncoding.EncodeToString(m.Sum(nil)) {
+		t.Fatal("X-Signature does not match the documented scheme")
+	}
+	var parsed map[string]map[string]any
+	json.Unmarshal([]byte(gotBody), &parsed)
+	if parsed["domain"]["registrant_contact_id"] != float64(123) || parsed["domain"]["duration"] != float64(1) {
+		t.Fatalf("body: %s", gotBody)
+	}
+
+	status, body = 402, `{"code":402,"message":"Payment Required","error":{"description":"Insufficient funds."}}`
+	if res := d.Register(context.Background(), "example.com"); res.Outcome != Fatal {
+		t.Fatalf("402 => %s", res.Outcome)
+	}
+	status, body = 200, `{"code":200,"message":"Success","data":{"domain_name":"example.com","expiration_date":"1458379145266"}}`
+	if res := d.Register(context.Background(), "example.com"); res.Outcome != Success {
+		t.Fatalf("200 => %s", res.Outcome)
+	}
+	status, body = 429, `{"code":429,"message":"Too Many Requests","error":{"description":"Too many requests."}}`
+	if res := d.Register(context.Background(), "example.com"); res.Outcome != RateLimited {
+		t.Fatalf("429 => %s", res.Outcome)
+	}
+	// search: available is documented as Boolean but the example shows "No"
+	status, body = 200, `{"code":200,"message":"Success","data":{"domain_name":"example.com","available":"No","premium":"yes"}}`
+	a, err := d.Check(context.Background(), "example.com")
+	if err != nil || a.Available || !a.Premium {
+		t.Fatalf("search parse: %+v %v", a, err)
+	}
+	if gotSig != "" {
+		t.Fatal("search must not be signed")
+	}
+}
+
+func TestPorkbunCostInCents(t *testing.T) {
+	var createBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != "pk" || r.Header.Get("X-Secret-API-Key") != "sk" {
+			t.Errorf("missing auth headers")
+		}
+		var b map[string]any
+		json.NewDecoder(r.Body).Decode(&b)
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/domain/create/") && b["dryRun"] == true && b["cost"] == float64(0):
+			io.WriteString(w, `{"status":"SUCCESS","dryRun":true,"wouldSucceed":true,"cost":973}`)
+		case strings.HasPrefix(r.URL.Path, "/domain/create/"):
+			createBody = b
+			io.WriteString(w, `{"status":"SUCCESS","domain":"example.com","cost":973,"orderId":12345678}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	p := NewPorkbun(config.Porkbun{APIKey: "pk", SecretKey: "sk"}, false)
+	p.base = srv.URL
+	res := p.Register(context.Background(), "example.com")
+	if res.Outcome != Success || res.Ref != "12345678" {
+		t.Fatalf("result: %+v", res)
+	}
+	if createBody["cost"] != float64(973) || createBody["agreeToTerms"] != "yes" {
+		t.Fatalf("create body: %v", createBody)
+	}
+}
+
+func TestPorkbunErrors(t *testing.T) {
+	code, body := 200, ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		json.NewDecoder(r.Body).Decode(&b)
+		if b["dryRun"] == true {
+			io.WriteString(w, `{"status":"SUCCESS","dryRun":true,"cost":973}`)
+			return
+		}
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(code)
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	p := NewPorkbun(config.Porkbun{APIKey: "pk", SecretKey: "sk"}, false)
+	p.base = srv.URL
+	for _, c := range []struct {
+		code int
+		body string
+		want Outcome
+	}{
+		{400, `{"status":"ERROR","code":"DOMAIN_NOT_AVAILABLE","message":"Domain is not available."}`, Unavailable},
+		{400, `{"status":"ERROR","code":"INSUFFICIENT_FUNDS","message":"no money"}`, Fatal},
+		{429, `{"status":"ERROR","code":"RATE_LIMIT_EXCEEDED","message":"slow down"}`, RateLimited},
+		{200, `{"status":"ERROR","code":"RATE_LIMIT_EXCEEDED","message":"slow down","ttlRemaining":3}`, RateLimited},
+	} {
+		code, body = c.code, c.body
+		if res := p.Register(context.Background(), "example.com"); res.Outcome != c.want {
+			t.Errorf("%s => %s, want %s", c.body, res.Outcome, c.want)
+		}
+	}
+}
+
+func TestCloudflareCheck(t *testing.T) {
+	resp := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" || !strings.HasSuffix(r.URL.Path, "/accounts/acc/registrar/domain-check") {
+			t.Errorf("bad request %s", r.URL.Path)
+		}
+		io.WriteString(w, resp)
+	}))
+	defer srv.Close()
+	f := NewCloudflare(config.Cloudflare{APIToken: "tok", AccountID: "acc"}, false)
+	f.base = srv.URL
+	resp = `{"success":true,"errors":[],"result":{"domains":[{"name":"a.com","registrable":true,"tier":"standard","pricing":{"currency":"USD","registration_cost":"8.57"}}]}}`
+	if a, err := f.Check(context.Background(), "a.com"); err != nil || !a.Available || a.Premium {
+		t.Fatalf("%+v %v", a, err)
+	}
+	resp = `{"success":true,"errors":[],"result":{"domains":[{"name":"mybrand.uk","reason":"extension_not_supported_via_api","registrable":false}]}}`
+	if _, err := f.Check(context.Background(), "mybrand.uk"); err != ErrUnsupported {
+		t.Fatalf("want unsupported, got %v", err)
+	}
+}
+
+func TestCloudflareRegisterAsync(t *testing.T) {
+	polls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			w.WriteHeader(202)
+			io.WriteString(w, `{"success":true,"errors":[],"result":{"completed":false,"state":"in_progress","links":{"self":"/accounts/acc/registrar/registrations/a.com/registration-status"}}}`)
+			return
+		}
+		polls++
+		io.WriteString(w, `{"success":true,"errors":[],"result":{"completed":true,"state":"succeeded","links":{"self":"/accounts/acc/registrar/registrations/a.com/registration-status"}}}`)
+	}))
+	defer srv.Close()
+	f := NewCloudflare(config.Cloudflare{APIToken: "tok", AccountID: "acc"}, false)
+	f.base = srv.URL
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if res := f.Register(ctx, "a.com"); res.Outcome != Success || polls == 0 {
+		t.Fatalf("%+v polls=%d", res, polls)
+	}
+}
+
+func TestInternetBSStatusVariants(t *testing.T) {
+	resp := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		if r.Form.Get("ApiKey") != "k" || r.Form.Get("ResponseFormat") != "JSON" {
+			t.Errorf("bad params")
+		}
+		io.WriteString(w, resp)
+	}))
+	defer srv.Close()
+	b := NewInternetBS(config.InternetBS{APIKey: "k", Password: "p", CloneContactsFrom: "mine.com"}, config.Contact{}, false)
+	b.base = srv.URL
+	resp = `{"transactid":"x","currency":"USD","price":"13.9","product_0_status":"SUCCESS","product_0_domain":"example.com"}`
+	if res := b.Register(context.Background(), "example.com"); res.Outcome != Success {
+		t.Fatalf("product_0_status SUCCESS => %s", res.Outcome)
+	}
+	resp = `{"transactid":"x","status":"PENDING"}`
+	if res := b.Register(context.Background(), "example.com"); res.Outcome != Pending {
+		t.Fatalf("PENDING => %s", res.Outcome)
+	}
+	resp = `{"transactid":"x","status":"AVAILABLE","domain":"example.com"}`
+	if a, err := b.Check(context.Background(), "example.com"); err != nil || !a.Available {
+		t.Fatalf("check: %+v %v", a, err)
+	}
+}
+
+func TestNetimSessionAndCheck(t *testing.T) {
+	sessions := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/session/" && r.Method == "POST":
+			if u, p, ok := r.BasicAuth(); !ok || u != "ID" || p != "PW" {
+				w.WriteHeader(401)
+				return
+			}
+			sessions++
+			io.WriteString(w, `{"access_token":"tok"}`)
+		case strings.HasSuffix(r.URL.Path, "/check/"):
+			if r.Header.Get("Authorization") != "Bearer tok" {
+				w.WriteHeader(401)
+				return
+			}
+			io.WriteString(w, `[{"domain":"example.lu","result":"AVAILABLE","reason":""}]`)
+		case r.Method == "POST":
+			io.WriteString(w, `{"ID_OPE":5416,"STATUS":"Pending","MESSAGE":"","TYPE":"domainCreate"}`)
+		}
+	}))
+	defer srv.Close()
+	n := NewNetim(config.Netim{ID: "ID", Password: "PW", OwnerID: "OW1", AdminID: "ID", TechID: "ID", BillID: "ID"}, false)
+	n.base = srv.URL
+	a, err := n.Check(context.Background(), "example.lu")
+	if err != nil || !a.Available {
+		t.Fatalf("%+v %v", a, err)
+	}
+	if res := n.Register(context.Background(), "example.lu"); res.Outcome != Pending || res.Ref != "5416" {
+		t.Fatalf("%+v", res)
+	}
+	if sessions != 1 {
+		t.Fatalf("session should be reused, opened %d", sessions)
+	}
+}

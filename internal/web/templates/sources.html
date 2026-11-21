@@ -1,0 +1,32 @@
+{{define "content"}}
+{{$d := .Data}}{{$csrf := .CSRF}}
+<h1>Monitor sources</h1>
+<p class="muted">Each suffix keeps its own reliability record per source. WHOIS/RDAP is always preferred when usable; a source that is rate-limited or keeps failing is benched for that suffix and probed again after its cooldown. Fallbacks are ordered by their track record for the suffix.</p>
+<p>Configured sources: {{range $i, $s := $d.Sources}}{{if $i}} · {{end}}{{srcLbl $s}}{{end}}</p>
+
+<h2>Current order per suffix</h2>
+<table class="compact">
+  <tr><th>suffix</th><th>source order (best first)</th></tr>
+  {{range $sfx, $plan := $d.Plans}}<tr><td>.{{$sfx}}</td><td>{{range $i, $s := $plan}}{{if $i}} → {{end}}{{srcLbl $s}}{{else}}<span class="st-error">no usable source</span>{{end}}</td></tr>{{end}}
+</table>
+
+<h2>Health</h2>
+{{if $d.Health}}
+<table class="compact">
+  <tr><th>suffix</th><th>source</th><th class="num">ok</th><th class="num">errors</th><th class="num">streak</th><th class="num">avg</th><th>last ok</th><th>last error at</th><th>state</th><th>last error</th><th></th></tr>
+  {{range $d.Health}}
+  <tr><td>.{{.Suffix}}</td><td>{{srcLbl .Source}}</td><td class="num">{{.OK}}</td><td class="num">{{.Errors}}</td><td class="num">{{.Streak}}</td><td class="num">{{ms .AvgMS}}</td>
+    <td class="small">{{ago .LastOK}}</td><td class="small">{{ago .LastErr}}</td>
+    <td class="small">{{if not (.Usable now)}}{{if not (isZero .UnsupportedUntil)}}<span class="muted">unsupported</span>{{else}}<span class="st-error">benched {{until .CooldownUntil}}</span>{{end}}{{else}}<span class="st-registered">usable</span>{{end}}</td>
+    <td class="small wrap">{{.LastError}}</td>
+    <td>{{if not (.Usable now)}}<form method="post" action="/sources/reset" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="suffix" value="{{.Suffix}}"><input type="hidden" name="source" value="{{.Source}}"><button>un-bench</button></form>{{end}}</td></tr>
+  {{end}}
+</table>
+{{else}}<p class="muted">No checks yet.</p>{{end}}
+
+<h2>Suffix registrar data</h2>
+<table class="compact">
+  <tr><th>suffix</th><th>source</th><th>fetched</th><th class="num">registrars</th><th>error</th></tr>
+  {{range $d.Suffixes}}<tr><td>.{{.Suffix}}</td><td>{{.Source}}</td><td class="small">{{ago .FetchedAt}}</td><td class="num">{{len .Registrars}}</td><td class="small st-error">{{.Error}}</td></tr>{{end}}
+</table>
+{{end}}

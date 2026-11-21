@@ -1,0 +1,44 @@
+{{define "content"}}
+{{$d := .Data}}{{$csrf := .CSRF}}
+<h1>Settings</h1>
+<p class="muted">Global parameters, stored in the database. Secrets (API keys, tokens, phone numbers, registrant contact) live only in <code>.env</code>.</p>
+<form method="post" action="/settings">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  {{range $g := $d.Groups}}
+  <h2>{{$g}}</h2>
+  <table class="kv">
+  {{range $d.Defs}}{{if eq .Group $g}}
+    <tr>
+      <th>{{.Label}}<div class="muted small">{{.Key}}</div></th>
+      <td>
+        {{if eq .Kind "bool"}}<label><input type="checkbox" name="{{.Key}}" value="1" {{if eq (index $d.Values .Key) "1"}}checked{{end}}> enabled</label>
+        {{else if eq .Kind "int"}}<input type="number" name="{{.Key}}" value="{{index $d.Values .Key}}" min="{{.Min}}" max="{{.Max}}" style="width:9em"> <span class="muted small">[{{.Min}}–{{.Max}}] default {{.Default}}</span>
+        {{else}}<input type="text" name="{{.Key}}" value="{{index $d.Values .Key}}" size="40"> <span class="muted small">default {{.Default}}</span>{{end}}
+        {{if .Help}}<div class="muted small">{{.Help}}</div>{{end}}
+      </td>
+    </tr>
+  {{end}}{{end}}
+  </table>
+  {{end}}
+  <button class="primary">save &amp; apply</button>
+</form>
+
+<h2>Registrars (from .env)</h2>
+<table class="compact">
+  <tr><th>registrar</th><th>API credentials</th><th>status</th></tr>
+  {{range $d.Registrars}}<tr><td>{{.Label}}</td><td>{{if .Configured}}<span class="st-registered">set</span>{{else}}<span class="muted">not set</span>{{end}}</td><td class="small">{{if not .Configured}}<span class="muted">unused</span>{{else if .Problem}}<span class="st-error">{{.Problem}}</span>{{else}}<span class="st-registered">ready</span>{{end}}</td></tr>{{end}}
+</table>
+
+<h2>Notifications (from .env)</h2>
+<form method="post" action="/settings/test-notify" class="actions">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <label class="chk {{if not $d.TelegramOK}}muted{{end}}"><input type="checkbox" name="telegram" value="1" {{if $d.TelegramOK}}checked{{end}}> Telegram {{if not $d.TelegramOK}}(not configured){{end}}</label>
+  <label class="chk {{if not $d.CallOK}}muted{{end}}"><input type="checkbox" name="call" value="1"> Twilio call {{if not $d.CallOK}}(not configured){{end}}</label>
+  <button>send test</button>
+</form>
+
+<h2>Environment (read-only)</h2>
+<table class="kv">
+  {{range $d.Env}}<tr><th>{{index . 0}}</th><td>{{or (index . 1) "—"}}</td></tr>{{end}}
+</table>
+{{end}}

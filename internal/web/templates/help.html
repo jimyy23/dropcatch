@@ -1,0 +1,39 @@
+{{define "content"}}
+<h1>How it works</h1>
+<div class="prose">
+<h2>Time zones</h2>
+<p>Everything is stored, entered and displayed in <b>UTC</b>. The header shows a live UTC clock next to your browser's clock. The catch-window inputs show what each UTC time is in your local time zone, so you can spot a wrong time zone before saving.</p>
+
+<h2>Monitoring</h2>
+<p>Every domain has its own worker, so a slow registry or a long drop-catch on one domain never delays another. Each worker checks at the domain's own interval, or the faster "armed" interval while drop-catch is armed.</p>
+<ol>
+  <li><b>WHOIS/RDAP</b> (the whois-domain-lookup sidecar) is the primary source. It reports availability plus registrar, dates, EPP status and nameservers. An empty or unparseable answer is never treated as "available".</li>
+  <li>When WHOIS fails or is rate-limited for a suffix, the check falls back to <b>Cloudean</b> and <b>Regery</b> (keyless web checkers), then to the <b>availability APIs of configured registrars</b>. Availability APIs never place orders.</li>
+  <li>Every answer updates a per-suffix health record. A source that is rate-limited, or fails several times in a row, is <i>benched</i> for that suffix and retried after a cooldown. A source that says it doesn't sell a suffix is skipped for a week. WHOIS returns as primary as soon as it answers again. See <a href="/sources">Sources</a>.</li>
+</ol>
+
+<h2>Drop-catch</h2>
+<p>A domain is <b>armed</b> when it has at least one registrar selected and either:</p>
+<ul>
+  <li>drop-catch is switched on and the current UTC time is inside its optional window, or</li>
+  <li>"auto drop-catch on pending delete" is on and a <i>pending delete</i> status has been seen.</li>
+</ul>
+<p>While armed, the domain is checked at the faster interval, and its WHOIS requests jump the per-suffix queue. On the <b>first</b> "available" signal from any source, orders go out to <b>all selected registrars at the same time</b>, each at its own documented pace. Orders are retried until one of these happens:</p>
+<ul>
+  <li>a registrar reports success (<b>won</b>);</li>
+  <li>a registrar accepts the order asynchronously (<b>pending</b>): that registrar is not ordered again;</li>
+  <li>the master monitor sees the domain <b>registered</b> twice in a row (someone else got it: <b>lost</b>);</li>
+  <li>the "keep placing orders for" duration or the catch window ends;</li>
+  <li>you press <i>stop</i>.</li>
+</ul>
+<p>Registrar errors that retrying can't fix (bad keys, insufficient balance, unsupported suffix, premium name, missing contact) drop that registrar from the session and log a warning. Registrars only receive <i>orders</i> during a session. Availability is decided by the monitor, so no order calls are spent on routine checks.</p>
+<p>Set <code>ORDERS_DRY_RUN=true</code> in .env to rehearse: sessions run and log everything, but nothing is bought. Porkbun uses its official <code>dryRun</code> option, which also confirms the price.</p>
+
+<h2>Notifications</h2>
+<p>Telegram messages and Twilio calls are per-domain switches. To avoid false alarms from unstable registries, the admin is notified only when availability is <b>confirmed</b>: WHOIS/RDAP says available <b>and</b> at least one of Cloudean, Regery or a registrar API that supports the suffix agrees. Each availability episode is notified once. Orders start before confirmation, because speed matters more there.</p>
+<p>Optionally (Settings → "Confirm without WHOIS"), suffixes that WHOIS can't answer can be confirmed by two independent fallback sources instead.</p>
+
+<h2>Registrar support per suffix</h2>
+<p>No single registrar sells every suffix. When a domain is added, the price database is queried: <a href="https://www.nazhumi.com/llms.txt" rel="noopener noreferrer">nazhumi</a> first, which lists every registrar for the suffix, with miqingju as the fallback. The domain page then marks which of your registrars sell that suffix, and at what price. Data is cached for a day.</p>
+</div>
+{{end}}

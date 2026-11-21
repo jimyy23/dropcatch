@@ -1,0 +1,49 @@
+{{define "status"}}<span class="st st-{{.}}">{{if eq . "pending_delete"}}pending delete{{else}}{{.}}{{end}}</span>{{end}}
+
+{{define "catchstate"}}{{if eq . "active"}}<span class="pill pill-active">catching</span>{{else if eq . "won"}}<span class="pill pill-won">won</span>{{else if eq . "pending"}}<span class="pill pill-pending">order pending</span>{{else if eq . "lost"}}<span class="pill pill-lost">lost</span>{{else if eq . "expired"}}<span class="pill pill-muted">ended</span>{{end}}{{end}}
+
+{{define "switch"}}
+<form method="post" action="/domain/{{.ID}}/toggle" class="inline sw" data-toggle>
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="field" value="{{.Field}}">
+  <input type="hidden" name="on" value="{{if .On}}0{{else}}1{{end}}">
+  <input type="hidden" name="back" value="{{.Back}}">
+  <button class="switch {{if .On}}is-on{{end}}" title="{{.Title}}: {{if .On}}on (click to turn off){{else}}off (click to turn on){{end}}" aria-pressed="{{if .On}}true{{else}}false{{end}}"><span class="knob"></span><span class="lbl">{{.Label}}</span></button>
+</form>
+{{end}}
+
+{{define "eventtable"}}
+{{if .}}
+<table class="compact">
+  <tr><th>time (UTC)</th><th>domain</th><th>type</th><th>detail</th></tr>
+  {{range .}}
+  <tr class="lvl-{{.Level}}">
+    <td class="nowrap"><span data-utc="{{iso .TS}}">{{datetime .TS}}</span></td>
+    <td class="nowrap">{{if .DomainID}}<a href="/domain/{{.DomainID}}">{{.Name}}</a>{{else}}—{{end}}</td>
+    <td class="nowrap">{{.Type}}</td>
+    <td class="wrap small">{{.Detail}}</td>
+  </tr>
+  {{end}}
+</table>
+{{else}}<p class="muted">No events yet.</p>{{end}}
+{{end}}
+
+{{define "ordertable"}}
+{{if .}}
+<table class="compact">
+  <tr><th>time (UTC)</th><th>domain</th><th>registrar</th><th class="num">#</th><th>outcome</th><th class="num">took</th><th>ref</th><th>message</th></tr>
+  {{range .}}
+  <tr>
+    <td class="nowrap"><span data-utc="{{iso .TS}}">{{datetime .TS}}</span></td>
+    <td class="nowrap">{{if .Name}}<a href="/domain/{{.DomainID}}">{{.Name}}</a>{{else}}#{{.DomainID}}{{end}}</td>
+    <td>{{.Registrar}}</td>
+    <td class="num">{{.Attempt}}</td>
+    <td><span class="oc oc-{{.Outcome}}">{{.Outcome}}</span></td>
+    <td class="num">{{ms .MS}}</td>
+    <td class="small wrap">{{.Ref}}</td>
+    <td class="small wrap">{{.Message}}</td>
+  </tr>
+  {{end}}
+</table>
+{{else}}<p class="muted">No orders placed yet.</p>{{end}}
+{{end}}

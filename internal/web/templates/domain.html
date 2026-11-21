@@ -1,0 +1,162 @@
+{{define "content"}}
+{{$d := .Data}}{{$x := $d.D}}{{$csrf := .CSRF}}{{$back := printf "/domain/%d" $x.ID}}
+<div class="titlebar">
+  <h1>{{$x.UName}} {{if ne $x.UName $x.Name}}<span class="muted small">{{$x.Name}}</span>{{end}}</h1>
+  <div class="actions">
+    <form method="post" action="/domain/{{$x.ID}}/check" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button>check now</button></form>
+    <form method="post" action="/domain/{{$x.ID}}/probe" class="inline" data-busy="asking every source… (up to 2 min)"><input type="hidden" name="csrf" value="{{$csrf}}"><button title="Ask every source once and compare">test all sources</button></form>
+    <form method="post" action="/domain/{{$x.ID}}/delete" class="inline" data-confirm="Delete {{$x.UName}} and its history?"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="danger">delete</button></form>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="box">
+    <h3>Availability</h3>
+    <table class="kv">
+      <tr><th>status</th><td>{{template "status" $x.Status}} <span class="muted small">since {{datetime $x.StatusSince}} UTC</span></td></tr>
+      <tr><th>answered by</th><td>{{srcLbl $x.StatusSource}}</td></tr>
+      <tr><th>last check</th><td><span data-utc="{{iso $x.CheckedAt}}">{{datetime $x.CheckedAt}}</span> <span class="muted">({{ago $x.CheckedAt}})</span></td></tr>
+      <tr><th>next check</th><td>{{until $d.Worker.NextAt}} <span class="muted">{{$d.Worker.Phase}}</span></td></tr>
+      {{if $x.LastError}}<tr><th>last error</th><td class="st-error small wrap">×{{$x.ErrorStreak}} {{$x.LastError}}</td></tr>{{end}}
+      <tr><th>confirmed available</th><td>{{if isZero $x.ConfirmedAvailAt}}<span class="muted">no</span>{{else}}<b class="st-available">yes</b> {{datetime $x.ConfirmedAvailAt}} UTC{{end}}
+        {{if $x.ConfirmDetail}}<div class="small muted wrap">{{$x.ConfirmDetail}}</div>{{end}}</td></tr>
+      <tr><th>source order for .{{$x.Suffix}}</th><td class="small">{{range $i, $s := $d.Plan}}{{if $i}} → {{end}}{{srcLbl $s}}{{else}}<span class="st-error">no usable source</span>{{end}}</td></tr>
+    </table>
+  </div>
+
+  <div class="box">
+    <h3>Registration <span class="muted small">{{if $x.InfoSource}}via {{$x.InfoSource}}, {{ago $x.InfoAt}}{{end}}</span></h3>
+    {{if $x.InfoSource}}
+    <table class="kv">
+      <tr><th>registrar</th><td>{{or $x.Registrar "—"}}</td></tr>
+      <tr><th>created</th><td>{{date $x.Created}}</td></tr>
+      <tr><th>expires</th><td>{{date $x.Expires}}{{if not (isZero $x.Expires)}} <span class="muted">({{days $x.Expires}} days)</span>{{end}}</td></tr>
+      <tr><th>updated</th><td>{{date $x.Updated}}</td></tr>
+      {{if not (isZero $x.AvailableDate)}}<tr><th>available date</th><td><b>{{datetime $x.AvailableDate}} UTC</b></td></tr>{{end}}
+      <tr><th>flags</th><td>{{if $x.PendingDelete}}<span class="tag tag-hot">pending delete</span>{{end}}{{if $x.Redemption}}<span class="tag tag-warm">redemption</span>{{end}}{{if not (or $x.PendingDelete $x.Redemption)}}<span class="muted">—</span>{{end}}</td></tr>
+      <tr><th>EPP status</th><td>{{range $x.Statuses}}<span class="tag">{{.}}</span>{{else}}<span class="muted">—</span>{{end}}</td></tr>
+      <tr><th>nameservers</th><td class="small">{{range $x.Nameservers}}<div>{{.}}</div>{{else}}<span class="muted">—</span>{{end}}</td></tr>
+      <tr><th>registry server</th><td class="small">{{or $x.WhoisServer "—"}}</td></tr>
+    </table>
+    {{if $x.RawWhois}}<details><summary class="small">raw WHOIS / RDAP</summary><pre class="raw">{{$x.RawWhois}}</pre></details>{{end}}
+    {{else}}<p class="muted">No registration data yet. Details come from WHOIS/RDAP; fallbacks only report availability.</p>{{end}}
+  </div>
+</div>
+
+{{if $d.Probe}}
+<h2>All sources, just now</h2>
+<table class="compact">
+  <tr><th>source</th><th>answer</th><th class="num">took</th><th>detail</th></tr>
+  {{range $d.Probe}}{{if .Source}}
+  <tr><td>{{srcLbl .Source}}</td><td>{{if .Err}}<span class="st-error">error</span>{{else}}{{template "status" .Status}}{{end}}</td><td class="num">{{.Elapsed}}</td><td class="small wrap">{{if .Err}}{{.Err}}{{else}}{{.Detail}}{{end}}</td></tr>
+  {{end}}{{end}}
+</table>
+{{end}}
+
+<h2>Controls</h2>
+<form method="post" action="/domain/{{$x.ID}}/settings" class="settings-form">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <div class="grid">
+    <fieldset class="box">
+      <legend>Monitor</legend>
+      <label class="chk big"><input type="checkbox" name="monitor_enabled" value="1" {{if $x.MonitorEnabled}}checked{{end}}> monitoring enabled</label>
+      <label>check every (seconds) <input type="number" name="monitor_interval" value="{{$x.MonitorInterval}}" min="30"> <span class="muted small">= {{secs $x.MonitorInterval}}</span></label>
+      <label>note <input type="text" name="note" value="{{$x.Note}}" size="30"></label>
+    </fieldset>
+
+    <fieldset class="box">
+      <legend>Drop-catch</legend>
+      <label class="chk big"><input type="checkbox" name="catch_enabled" value="1" {{if $x.CatchEnabled}}checked{{end}}> drop-catch enabled</label>
+      <label class="chk"><input type="checkbox" name="auto_catch_pd" value="1" {{if $x.AutoCatchPD}}checked{{end}}> enter drop-catch automatically on <b>pending delete</b></label>
+      <div class="window">
+        <label>window start <b>(UTC)</b> <input type="datetime-local" name="catch_start" value="{{local $x.CatchStart}}" data-utc-input></label>
+        <label>window end <b>(UTC)</b> <input type="datetime-local" name="catch_end" value="{{local $x.CatchEnd}}" data-utc-input></label>
+        <div class="small muted" data-utc-preview></div>
+        <p class="small muted">Both optional. Empty = no limit. Values are <b>UTC</b>; the line above shows them in your browser's time zone to catch mistakes.</p>
+      </div>
+      <label>monitor every (seconds) while armed <input type="number" name="catch_interval" value="{{$x.CatchInterval}}" min="5"></label>
+      <label>keep placing orders for (minutes) <input type="number" name="catch_duration" value="{{$x.CatchDuration}}" min="1"></label>
+      <div class="regs">
+        <div class="small muted">Registrars (all selected ones are tried at the same time). Support for .{{$x.Suffix}} from {{if $d.Book}}{{$d.Book.Source}}, {{ago $d.Book.FetchedAt}}{{else}}the price database (not fetched yet){{end}}:</div>
+        {{range $d.Registrars}}
+        <label class="chk reg {{if eq .Sells "no"}}sells-no{{end}}">
+          <input type="checkbox" name="registrar" value="{{.Key}}" {{if .Selected}}checked{{end}}>
+          <b>{{.Label}}</b>
+          {{if eq .Sells "yes"}}<span class="tag tag-ok">sells .{{$x.Suffix}}{{with .Price}}{{if .Register}} · {{.Register}} {{.Currency}}{{end}}{{end}}</span>
+          {{else if eq .Sells "no"}}<span class="tag tag-no">does not sell .{{$x.Suffix}}</span>
+          {{else}}<span class="tag">support unknown</span>{{end}}
+          {{if not .Configured}}<span class="tag tag-no">no API keys in .env</span>{{else if .Problem}}<span class="tag tag-warm">{{.Problem}}</span>{{end}}
+        </label>
+        {{end}}
+      </div>
+    </fieldset>
+
+    <fieldset class="box">
+      <legend>Notify me</legend>
+      <label class="chk big {{if not $d.TelegramOK}}muted{{end}}"><input type="checkbox" name="notify_telegram" value="1" {{if $x.NotifyTelegram}}checked{{end}}> Telegram {{if not $d.TelegramOK}}<span class="small">(not configured)</span>{{end}}</label>
+      <label class="chk big {{if not $d.CallOK}}muted{{end}}"><input type="checkbox" name="notify_call" value="1" {{if $x.NotifyCall}}checked{{end}}> phone call (Twilio) {{if not $d.CallOK}}<span class="small">(not configured)</span>{{end}}</label>
+      <p class="small muted">Sent once per availability episode, only when <b>confirmed</b>: WHOIS/RDAP says available <b>and</b> Cloudean, Regery or a registrar API that supports .{{$x.Suffix}} agrees. Orders do not wait for confirmation.</p>
+    </fieldset>
+  </div>
+  <p><button class="primary">save controls</button></p>
+</form>
+
+<h2>Drop-catch session</h2>
+<div class="box">
+  <p>
+    {{if $d.Armed}}<b class="st-armed">ARMED</b> <span class="muted">({{$d.ArmReason}})</span>: orders start on the first "available" signal.
+    {{else if $d.ArmReason}}<span class="muted">not armed: {{$d.ArmReason}}</span>{{else}}<span class="muted">not armed</span>{{end}}
+  </p>
+  {{if ne $x.CatchState "idle"}}
+  <table class="kv">
+    <tr><th>state</th><td>{{template "catchstate" $x.CatchState}}</td></tr>
+    <tr><th>started</th><td>{{datetime $x.CatchStartedAt}} UTC</td></tr>
+    <tr><th>deadline</th><td>{{datetime $x.CatchDeadline}} UTC {{if eq $x.CatchState "active"}}<span class="muted">({{until $x.CatchDeadline}} left)</span>{{end}}</td></tr>
+    {{if not (isZero $x.CatchEndedAt)}}<tr><th>ended</th><td>{{datetime $x.CatchEndedAt}} UTC</td></tr>{{end}}
+    <tr><th>order attempts</th><td>{{$x.CatchAttempts}}</td></tr>
+    {{if $x.CatchResult}}<tr><th>result</th><td>{{$x.CatchResult}}</td></tr>{{end}}
+  </table>
+  {{end}}
+  <div class="actions">
+    {{if eq $x.CatchState "active"}}<form method="post" action="/domain/{{$x.ID}}/catch/stop" class="inline" data-confirm="Stop placing orders for {{$x.UName}}?"><input type="hidden" name="csrf" value="{{$csrf}}"><button class="danger">stop session</button></form>{{end}}
+    {{if or (eq $x.CatchState "won") (eq $x.CatchState "pending") (eq $x.CatchState "lost") (eq $x.CatchState "expired")}}<form method="post" action="/domain/{{$x.ID}}/catch/reset" class="inline"><input type="hidden" name="csrf" value="{{$csrf}}"><button title="Allow a new session (e.g. after a pending order failed)">reset &amp; re-arm</button></form>{{end}}
+  </div>
+</div>
+
+<h2>Orders</h2>
+{{template "ordertable" $d.Orders}}
+
+<h2>Registrar prices for .{{$x.Suffix}}</h2>
+<form method="post" action="/domain/{{$x.ID}}/pricing" class="actions"><input type="hidden" name="csrf" value="{{$csrf}}"><span class="muted small">{{if $d.Book}}{{$d.Book.Source}} · fetched {{ago $d.Book.FetchedAt}}{{if not $d.Book.Complete}} · partial list (cheapest per operation only){{end}}{{if $d.Book.Error}} · <span class="st-error">{{$d.Book.Error}}</span>{{end}}{{else}}not fetched yet{{end}}</span> <button>refresh</button></form>
+{{if and $d.Book $d.Book.Prices}}
+<details {{if le (len $d.Book.Prices) 12}}open{{end}}><summary class="small">{{len $d.Book.Prices}} registrars</summary>
+<table class="compact">
+  <tr><th>registrar</th><th class="num">register</th><th class="num">renew</th><th class="num">transfer</th><th>currency</th><th>updated</th></tr>
+  {{range $d.Book.Sorted}}
+  <tr><td>{{.Name}} <span class="muted small">{{.Registrar}}</span></td><td class="num">{{.Register}}</td><td class="num">{{.Renew}}</td><td class="num">{{.Transfer}}</td><td>{{.Currency}}</td><td class="small muted">{{.Updated}}</td></tr>
+  {{end}}
+</table>
+</details>
+{{end}}
+
+<h2>Source health for .{{$x.Suffix}}</h2>
+<table class="compact">
+  <tr><th>source</th><th class="num">ok</th><th class="num">errors</th><th class="num">streak</th><th class="num">avg</th><th>last ok</th><th>state</th><th>last error</th></tr>
+  {{range $d.Health}}
+  <tr><td>{{srcLbl .Source}}</td><td class="num">{{.OK}}</td><td class="num">{{.Errors}}</td><td class="num">{{.Streak}}</td><td class="num">{{ms .AvgMS}}</td><td class="small">{{ago .LastOK}}</td>
+    <td class="small">{{if not (.Usable now)}}{{if not (isZero .UnsupportedUntil)}}<span class="muted">unsupported</span>{{else}}<span class="st-error">benched {{until .CooldownUntil}}</span>{{end}}{{else}}<span class="st-registered">usable</span>{{end}}</td>
+    <td class="small wrap">{{.LastError}}</td></tr>
+  {{end}}
+</table>
+
+<h2>Check history</h2>
+<table class="compact">
+  <tr><th>time (UTC)</th><th>purpose</th><th>source</th><th>result</th><th class="num">took</th><th>detail</th></tr>
+  {{range $d.Checks}}
+  <tr><td class="nowrap"><span data-utc="{{iso .TS}}">{{datetime .TS}}</span></td><td>{{.Purpose}}</td><td>{{srcLbl .Source}}</td><td>{{if eq .Result "error"}}<span class="st-error">error</span>{{else}}{{template "status" .Result}}{{end}}</td><td class="num">{{ms .MS}}</td><td class="small wrap">{{.Detail}}</td></tr>
+  {{else}}<tr><td colspan="6" class="muted">no checks yet</td></tr>{{end}}
+</table>
+
+<h2>Events</h2>
+{{template "eventtable" $d.Events}}
+{{end}}

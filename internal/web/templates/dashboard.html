@@ -1,0 +1,102 @@
+{{define "content"}}
+{{$d := .Data}}{{$csrf := .CSRF}}
+<div class="titlebar">
+  <h1>Domains</h1>
+  <nav class="filters-inline">
+    <a href="/" class="{{if eq $d.Filter ""}}on{{end}}">all {{index $d.Counts "all"}}</a>
+    <a href="/?f=armed" class="{{if eq $d.Filter "armed"}}on{{end}}">armed {{index $d.Counts "armed"}}</a>
+    <a href="/?f=available" class="{{if eq $d.Filter "available"}}on{{end}}">available {{index $d.Counts "available"}}</a>
+    <a href="/?f=pending_delete" class="{{if eq $d.Filter "pending_delete"}}on{{end}}">pending delete {{index $d.Counts "pending_delete"}}</a>
+    <a href="/?f=redemption" class="{{if eq $d.Filter "redemption"}}on{{end}}">redemption {{index $d.Counts "redemption"}}</a>
+    <a href="/?f=registered" class="{{if eq $d.Filter "registered"}}on{{end}}">registered {{index $d.Counts "registered"}}</a>
+    <a href="/?f=failing" class="{{if eq $d.Filter "failing"}}on{{end}}">check failing {{index $d.Counts "failing"}}</a>
+  </nav>
+</div>
+
+{{if not $d.WhoisURL}}<div class="flash err">WHOIS_URL is not set: monitoring runs on fallbacks only (Cloudean, Regery, registrar APIs) and no registration details are available.</div>{{end}}
+
+<details class="box add" {{if not $d.Rows}}open{{end}}>
+  <summary><b>+ Add domains</b></summary>
+  <form method="post" action="/domains" class="addform">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label class="names">Domain names <span class="muted small">(one per line, or separated by commas; IDNs allowed)</span>
+      <textarea name="names" rows="3" placeholder="example.com&#10;müller.de" required></textarea></label>
+    <div class="row">
+      <label>Monitor every (s) <input type="number" name="monitor_interval" value="{{index $d.Defaults "monitor"}}" min="30"></label>
+      <label>Armed interval (s) <input type="number" name="catch_interval" value="{{index $d.Defaults "catch"}}" min="5"></label>
+      <label>Order for (min) <input type="number" name="catch_duration" value="{{index $d.Defaults "dur"}}" min="1"></label>
+      <label>Note <input type="text" name="note" size="24"></label>
+    </div>
+    <div class="row">
+      <fieldset><legend>Drop-catch registrars</legend>
+        {{range $d.Registrars}}<label class="chk {{if not .Configured}}muted{{end}}"><input type="checkbox" name="registrar" value="{{.Key}}"> {{.Label}}{{if not .Configured}} <span class="small">(no keys)</span>{{end}}</label>{{end}}
+      </fieldset>
+      <fieldset><legend>Options</legend>
+        <label class="chk"><input type="checkbox" name="auto_catch_pd" value="1"> auto drop-catch on pending delete</label>
+        <label class="chk {{if not $d.TelegramOK}}muted{{end}}"><input type="checkbox" name="notify_telegram" value="1"> Telegram</label>
+        <label class="chk {{if not $d.CallOK}}muted{{end}}"><input type="checkbox" name="notify_call" value="1"> phone call</label>
+      </fieldset>
+    </div>
+    <p class="muted small">Drop-catch windows (UTC) are set per domain on its page. Registrar support for each suffix is shown there too.</p>
+    <button class="primary">Add</button>
+  </form>
+</details>
+
+{{if $d.Rows}}
+<form id="bulk" method="post" action="/domains/bulk" class="actions">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <input type="hidden" name="back" value="/{{if $d.Filter}}?f={{$d.Filter}}{{end}}">
+  <span class="muted">selected:</span>
+  <select name="action">
+    <option value="check">check now</option>
+    <option value="monitor_on">monitor on</option><option value="monitor_off">monitor off</option>
+    <option value="catch_on">drop-catch on</option><option value="catch_off">drop-catch off</option>
+    <option value="telegram_on">telegram on</option><option value="telegram_off">telegram off</option>
+    <option value="call_on">call on</option><option value="call_off">call off</option>
+    <option value="delete">delete</option>
+  </select>
+  <button>apply</button>
+</form>
+<div class="tablewrap">
+<table class="domains" data-live-domains>
+  <tr>
+    <th><input type="checkbox" data-select-all title="select all"></th>
+    <th>domain</th><th>status</th><th>expires</th><th>registrar</th><th>checked</th><th>next</th>
+    <th>monitor</th><th>drop-catch</th><th>notify</th>
+  </tr>
+  {{range $d.Rows}}
+  {{$back := "/"}}
+  <tr data-id="{{.ID}}" class="{{if .Armed}}row-armed{{end}} {{if eq .Status "available"}}row-avail{{end}}">
+    <td><input type="checkbox" name="id" value="{{.ID}}" form="bulk"></td>
+    <td class="wrap"><a href="/domain/{{.ID}}"><b>{{.UName}}</b></a>{{if ne .UName .Name}}<div class="muted small">{{.Name}}</div>{{end}}{{if .Note}}<div class="muted small">{{.Note}}</div>{{end}}</td>
+    <td class="nowrap"><span data-f="status">{{template "status" .Status}}</span>
+      <div class="small muted"><span data-f="source">{{srcLbl .StatusSource}}</span></div>
+      {{if .LastError}}<div class="small st-error" title="{{.LastError}}" data-f="error">check failing ×{{.ErrorStreak}}</div>{{end}}</td>
+    <td class="nowrap">{{date .Expires}}{{if not (isZero .Expires)}}<div class="small muted">{{days .Expires}}d</div>{{end}}</td>
+    <td class="small wrap">{{or .Registrar "—"}}</td>
+    <td class="nowrap small" data-f="checked">{{ago .CheckedAt}}</td>
+    <td class="nowrap small"><span data-f="next">{{until .Worker.NextAt}}</span><div class="muted" data-f="phase">{{.Worker.Phase}}</div></td>
+    <td>{{template "switch" (dict "ID" .ID "CSRF" $csrf "Field" "monitor" "On" .MonitorEnabled "Label" (secs .MonitorInterval) "Title" "Monitoring" "Back" $back)}}</td>
+    <td class="nowrap">
+      {{template "switch" (dict "ID" .ID "CSRF" $csrf "Field" "catch" "On" .CatchEnabled "Label" "catch" "Title" "Drop-catch" "Back" $back)}}
+      {{if .AutoCatchPD}}<span class="tag" title="enters drop-catch automatically on pending delete">auto-PD</span>{{end}}
+      <div class="small">{{if .Armed}}<span class="st-armed">armed</span> <span class="muted">({{.ArmReason}})</span>{{else if .ArmReason}}<span class="muted">{{.ArmReason}}</span>{{end}}
+      <span data-f="catch">{{template "catchstate" .CatchState}}</span></div>
+      {{if .CatchRegistrars}}<div class="small muted">{{join .CatchRegistrars ", "}}</div>{{end}}
+    </td>
+    <td class="nowrap">
+      {{template "switch" (dict "ID" .ID "CSRF" $csrf "Field" "telegram" "On" .NotifyTelegram "Label" "TG" "Title" "Telegram" "Back" $back)}}
+      {{template "switch" (dict "ID" .ID "CSRF" $csrf "Field" "call" "On" .NotifyCall "Label" "call" "Title" "Phone call" "Back" $back)}}
+    </td>
+  </tr>
+  {{end}}
+</table>
+</div>
+{{else}}
+<p class="muted">No domains{{if $d.Filter}} match this filter{{end}}.</p>
+{{end}}
+
+<h2>Recent events</h2>
+{{template "eventtable" $d.Events}}
+<p><a href="/events">all events →</a></p>
+{{end}}

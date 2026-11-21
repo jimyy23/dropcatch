@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l cmd internal)"
+      - run: go vet ./...
+      - run: go test ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: cp .env.example .env && sed -i 's/^ORDERS_DRY_RUN=false/ORDERS_DRY_RUN=true/' .env
+      - run: docker compose build
+      - name: Smoke test (app + whois sidecar)
+        run: |
+          docker compose up -d
+          for i in $(seq 1 30); do docker compose logs dropcatch | grep -q "whois service reachable" && break; sleep 2; done
+          docker compose ps
+          docker compose logs dropcatch | grep -q "whois service reachable"
+          docker compose exec -T dropcatch dropcatch healthcheck
+      - if: always()
+        run: docker compose down -v
