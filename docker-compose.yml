@@ -23,11 +23,14 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # WHOIS / RDAP / web-WHOIS lookup service (reg233/whois-domain-lookup, PHP),
-  # git submodule in third_party/ (git submodule update --init). Internal only: not published on the host.
+  # WHOIS / RDAP / web-WHOIS lookup service (reg233/whois-domain-lookup, PHP).
+  # Built straight from the upstream repo, pinned to a reviewed commit, so no
+  # submodule checkout is needed (EasyPanel clones without submodules).
+  # Set WHOIS_BUILD_CONTEXT=./third_party/whois-domain-lookup to build from
+  # the local submodule instead. Internal only: not published on the host.
   whois:
     build:
-      context: ./third_party/whois-domain-lookup
+      context: ${WHOIS_BUILD_CONTEXT:-https://github.com/reg233/whois-domain-lookup.git#3bfffebbc726fb794cddae19bf8e7fb49059bda7}
     image: dropcatch-whois:latest
     restart: unless-stopped
     environment:

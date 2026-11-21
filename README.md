@@ -7,7 +7,7 @@ Single Go binary, SQLite, server-rendered admin UI, and a PHP WHOIS sidecar. It 
 ## Quick start (Docker)
 
 ```sh
-git clone --recurse-submodules https://github.com/jimyy23/dropcatch.git
+git clone https://github.com/jimyy23/dropcatch.git
 cd dropcatch
 cp .env.example .env        # set ADMIN_USERNAME / ADMIN_PASSWORD, registrar keys, Telegram/Twilio
 docker compose up -d --build
@@ -24,7 +24,6 @@ Create an app from this repo using **Docker Compose** (`docker-compose.yml`). Th
 - Set `BASE_URL=https://your.domain` and `TRUST_PROXY=true`.
 - Expose port 8080 of `dropcatch` through the EasyPanel domain.
 - Keep the `dropcatch-data` volume. It holds the database at `/data/dropcatch.db`.
-- If EasyPanel's git source does not fetch submodules, run `git submodule update --init` in the build context first.
 
 The `whois` service stays internal.
 
@@ -58,7 +57,7 @@ docker compose exec dropcatch dropcatch user reset-password alice 'new-long-pass
 
 ## How availability is decided
 
-1. **WHOIS/RDAP** (sidecar [reg233/whois-domain-lookup](https://github.com/reg233/whois-domain-lookup), git submodule in `third_party/`) is the primary source. It also supplies status and dates. Empty or unparseable answers never count as "available".
+1. **WHOIS/RDAP** (sidecar [reg233/whois-domain-lookup](https://github.com/reg233/whois-domain-lookup), built from a pinned upstream commit) is the primary source. It also supplies status and dates. Empty or unparseable answers never count as "available".
 2. When WHOIS errors or is rate-limited for a suffix, the check falls back to **Cloudean** and **Regery**. These are keyless web checkers, which were probed for rate limits before use. After those come the **availability APIs** of configured registrars (Dynadot, Porkbun, Internet.bs, Netim, Cloudflare), which never place orders and are capped per hour.
 3. Health is tracked **per suffix and per source**. A rate-limited or repeatedly failing source is benched for that suffix, then retried once the cooldown ends. A source that doesn't sell the suffix is skipped for a week. WHOIS becomes the primary source again as soon as it answers. See the **Sources** page.
 
@@ -99,7 +98,7 @@ Orders don't wait for this confirmation. A setting lets two independent fallback
 
 ```sh
 go test ./...
-docker run -d -p 18090:80 $(docker build -q third_party/whois-domain-lookup)   # WHOIS sidecar
+docker run -d -p 18090:80 $(docker build -q https://github.com/reg233/whois-domain-lookup.git#3bfffebbc726fb794cddae19bf8e7fb49059bda7)   # WHOIS sidecar
 DB_PATH=./data/dev.db ADMIN_USERNAME=admin ADMIN_PASSWORD=admin-pass-123 \
   WHOIS_URL=http://127.0.0.1:18090 ORDERS_DRY_RUN=true go run ./cmd/dropcatch
 ```
@@ -117,4 +116,4 @@ Layout:
 | `internal/store` | SQLite |
 | `internal/web` | UI |
 
-`third_party/whois-domain-lookup` is a git submodule pointing at [reg233/whois-domain-lookup](https://github.com/reg233/whois-domain-lookup), pinned to commit `3bfffeb` and used unmodified. If you cloned without `--recurse-submodules`, run `git submodule update --init`. To move the pin: `git -C third_party/whois-domain-lookup pull origin main`, test, then commit the new submodule commit.
+The WHOIS sidecar is [reg233/whois-domain-lookup](https://github.com/reg233/whois-domain-lookup), used unmodified and pinned to commit `3bfffeb`. `docker compose` builds it straight from that GitHub commit, so a plain clone is enough (no submodules), which suits EasyPanel. `third_party/whois-domain-lookup` is the same commit as an optional git submodule, for reading the code or building offline (`git submodule update --init`, then `WHOIS_BUILD_CONTEXT=./third_party/whois-domain-lookup`). To move the pin, update the commit in `docker-compose.yml` and the submodule together.
