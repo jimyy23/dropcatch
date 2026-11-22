@@ -27,10 +27,11 @@ func (e *Engine) StopCatch(id int64) bool {
 }
 
 var (
-	errStopped  = fmt.Errorf("stopped by admin")
-	errWon      = fmt.Errorf("won")
-	errLost     = fmt.Errorf("registered by someone else")
-	errDisarmed = fmt.Errorf("drop-catch disarmed")
+	errStopped     = fmt.Errorf("stopped by admin")
+	errWon         = fmt.Errorf("won")
+	errLost        = fmt.Errorf("registered by someone else")
+	errDisarmed    = fmt.Errorf("drop-catch disarmed")
+	errNoRegistrar = fmt.Errorf("no registrar left")
 )
 
 // runCatch places orders at every selected registrar concurrently until one
@@ -159,12 +160,19 @@ func (e *Engine) runCatch(parent context.Context, w *worker, d *store.Domain, na
 		}(r)
 	}
 
+	// When every registrar loop has ended (won, pending, dry run or all
+	// dropped as fatal), stop the session instead of idling to the deadline.
+	go func() {
+		wg.Wait()
+		ccancel(errNoRegistrar)
+	}()
+
 	// Master monitor: stop when the domain is registered by someone else.
 	// Two consecutive "registered" answers are required because registries
 	// flap; one of our own orders succeeding is handled above (won).
-	wg.Add(1)
+	monDone := make(chan struct{})
 	go func() {
-		defer wg.Done()
+		defer close(monDone)
 		interval := time.Duration(d.CatchInterval) * time.Second
 		if interval < cfg.MinCatchInterval {
 			interval = cfg.MinCatchInterval
@@ -215,6 +223,7 @@ func (e *Engine) runCatch(parent context.Context, w *worker, d *store.Domain, na
 		}
 	}()
 	wg.Wait()
+	<-monDone
 
 	cause := context.Cause(cctx)
 	state, result, level := store.CatchExpired, "", "warn"
@@ -233,6 +242,8 @@ func (e *Engine) runCatch(parent context.Context, w *worker, d *store.Domain, na
 		result = "drop-catch disabled or window ended"
 	case len(dryRuns) > 0 && len(dryRuns) == len(regs):
 		result = "dry run only (ORDERS_DRY_RUN=true): " + strings.Join(dryRuns, ", ")
+	case cause == errNoRegistrar:
+		result = fmt.Sprintf("every registrar failed permanently after %d attempts (see registrar_dropped events)", attempts.Load())
 	default:
 		result = fmt.Sprintf("duration elapsed without success (%d attempts)", attempts.Load())
 	}

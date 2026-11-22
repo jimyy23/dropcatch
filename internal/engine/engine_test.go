@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -174,6 +175,22 @@ func TestExpiredSessionNotRestartedInSameEpisode(t *testing.T) {
 	s.set(store.StatusAvailable)
 	e.CheckNow(id)
 	waitState(t, st, id, store.CatchActive)
+}
+
+func TestCatchEndsWhenAllRegistrarsFatal(t *testing.T) {
+	broke := &reg{key: "broke", fatal: true}
+	e, st, s, id := setup(t, broke)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+	s.set(store.StatusAvailable)
+	start := time.Now()
+	e.CheckNow(id)
+	d := waitState(t, st, id, store.CatchExpired)
+	if time.Since(start) > 10*time.Second || !strings.Contains(d.CatchResult, "every registrar failed") {
+		t.Fatalf("session should end promptly with a clear result, got %q after %s", d.CatchResult, time.Since(start))
+	}
 }
 
 func TestNotArmedPlacesNoOrders(t *testing.T) {

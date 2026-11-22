@@ -23,5 +23,27 @@ Orders are paid from the account balance; no card payments are handled.
 | `fatal` | credentials, funds, unsupported TLD, premium, contact data | drop that registrar for the session, log a warning |
 | `dry_run` | `ORDERS_DRY_RUN=true` | nothing purchased |
 
-Fields not shown by the docs (e.g. Internet.bs and Netim JSON error bodies) are matched on message
-text; an unrecognised failure is treated as retryable so a drop is never abandoned early.
+Fields not shown by the docs (e.g. Netim JSON error bodies) are matched on message text; an
+unrecognised failure is treated as retryable so a drop is never abandoned early.
+
+## Internet.bs: verified against the test server
+
+Run `LIVE_INTERNETBS=1 go test ./internal/registrar -run Live -v` (uses `https://testapi.internet.bs`
+with the public `testapi`/`testpass` credentials and the `REGISTRANT_*` contact; nothing is bought).
+Observed JSON responses (2026-11-22), now covered by unit tests:
+
+| Call | Response | Mapped to |
+|---|---|---|
+| Check, taken (`example.com`) | `status:"UNAVAILABLE"`, `price:{"ispremium":"NO"}` | not available |
+| Check, unknown name | `status:"FAILURE"` without message | error (never "available") |
+| Create, taken | `status:"FAILURE"`, `product:[{status:"FAILURE", code:100017, "is not available for registration"}]` | `unavailable` (retry) |
+| Create, bad/unverified contact | `code:100002` + `details:[{field,error}]` | `fatal` |
+| Create, missing contact | `code:100003` | `fatal` |
+| CloneContactsFromDomain not ours | `code:100005` "Permission denied" | `fatal` |
+| Wrong API key/password | `code:107002` | `fatal` |
+| Some TLDs on the test server (`.biz`, `.xyz`, `.co`) | `code:107015` "Unexpected ERROR" | `error` (retry) |
+
+The test server never reports a random name as AVAILABLE and refuses to create any test name, so a
+real `SUCCESS` cannot be produced there; the success shapes from the PDF (`status`/`product_0_status`
+`SUCCESS`, `PENDING`) are unit-tested. Unverified contact e-mails are rejected by Internet.bs
+(code 100002), so use a verified `REGISTRANT_EMAIL` or `INTERNETBS_CLONE_CONTACTS_FROM`.

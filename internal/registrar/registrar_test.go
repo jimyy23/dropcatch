@@ -174,7 +174,8 @@ func TestCloudflareRegisterAsync(t *testing.T) {
 	}
 }
 
-func TestInternetBSStatusVariants(t *testing.T) {
+// Responses below were captured from https://testapi.internet.bs on 2026-11-22.
+func TestInternetBSRealResponses(t *testing.T) {
 	resp := ""
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
@@ -186,17 +187,45 @@ func TestInternetBSStatusVariants(t *testing.T) {
 	defer srv.Close()
 	b := NewInternetBS(config.InternetBS{APIKey: "k", Password: "p", CloneContactsFrom: "mine.com"}, config.Contact{}, false)
 	b.base = srv.URL
-	resp = `{"transactid":"x","currency":"USD","price":"13.9","product_0_status":"SUCCESS","product_0_domain":"example.com"}`
-	if res := b.Register(context.Background(), "example.com"); res.Outcome != Success {
-		t.Fatalf("product_0_status SUCCESS => %s", res.Outcome)
+
+	resp = `{"transactid":"10104348a468f76e94ac88d79d1d71dc","status":"UNAVAILABLE","domain":"example.com","minregperiod":"1Y","maxregperiod":"10Y","registrarlockallowed":"YES","privatewhoisallowed":"YES","realtimeregistration":"YES","price":{"ispremium":"NO"}}`
+	if a, err := b.Check(context.Background(), "example.com"); err != nil || a.Available || a.Premium {
+		t.Fatalf("UNAVAILABLE: %+v %v", a, err)
 	}
-	resp = `{"transactid":"x","status":"PENDING"}`
-	if res := b.Register(context.Background(), "example.com"); res.Outcome != Pending {
-		t.Fatalf("PENDING => %s", res.Outcome)
+	resp = `{"transactid":"f4936a25ccb3c081105ffeec1745bd55","status":"FAILURE","domain":"foobar123zqx.com","minregperiod":"1Y","price":{"ispremium":"NO"}}`
+	if _, err := b.Check(context.Background(), "foobar123zqx.com"); err == nil {
+		t.Fatal("FAILURE must not read as available or unavailable")
 	}
-	resp = `{"transactid":"x","status":"AVAILABLE","domain":"example.com"}`
-	if a, err := b.Check(context.Background(), "example.com"); err != nil || !a.Available {
-		t.Fatalf("check: %+v %v", a, err)
+	resp = `{"transactid":"3060f7522d55f190e82931da96ac70de","status":"FAILURE","message":"Unexpected ERROR: Tech department has been notified!","code":107015}`
+	if _, err := b.Check(context.Background(), "example.co"); err == nil || err == ErrUnsupported {
+		t.Fatalf("107015 is a transient error, got %v", err)
+	}
+
+	cases := []struct {
+		body string
+		want Outcome
+	}{
+		{`{"transactid":"1a2a","status":"FAILURE","product":[{"status":"FAILURE","message":"Domain \"x.com\" is not available for registration","code":100017}]}`, Unavailable},
+		{`{"transactid":"a44c","status":"FAILURE","message":"Invalid value \"test@example.com\" for parameter \"registrant_email\"!","code":100002,"details":[{"field":"registrant_email","val":"test@example.com","error":"This email has been previously been used ... not been verified."}]}`, Fatal},
+		{`{"transactid":"fb02","status":"FAILURE","message":"Required parameter \"registrant_email\" missing!","code":100003,"details":[{"field":"registrant_email","val":null,"error":"Please populate this field"}]}`, Fatal},
+		{`{"transactid":"33e4","status":"FAILURE","message":"Permission denied! \"x.com\" permission is not granted.","code":100005}`, Fatal},
+		{`{"transactid":"49e3","status":"FAILURE","message":"Invalid API key and\/or Password","code":107002}`, Fatal},
+		{`{"transactid":"eda5","status":"FAILURE","message":"Unexpected ERROR: Tech department has been notified!","code":107015}`, Retryable},
+		{`{"transactid":"4448","status":"FAILURE","message":"Invalid value \"US\" for parameter \"registrant_countrycode\"!","code":100002,"details":[{"field":"registrant_countrycode","val":"US","error":"European citizenship is required"}]}`, Fatal},
+		// documented success shapes (PDF): flat product_0_* (TEXT) and status SUCCESS
+		{`{"transactid":"820b","status":"SUCCESS","currency":"USD","price":13.9,"product":[{"status":"SUCCESS","domain":"example.com","price":13.9,"expiration":"2010/04/02"}]}`, Success},
+		{`{"transactid":"x","status":"PENDING"}`, Pending},
+	}
+	for _, c := range cases {
+		resp = c.body
+		res := b.Register(context.Background(), "x.com")
+		if res.Outcome != c.want {
+			t.Errorf("%s\n=> %s (%s), want %s", c.body, res.Outcome, res.Message, c.want)
+		}
+	}
+	resp = cases[1].body
+	if res := b.Register(context.Background(), "x.com"); !strings.Contains(res.Message, "registrant_email") || !strings.Contains(res.Message, "100002") {
+		t.Errorf("field errors and code should be in the message: %q", res.Message)
 	}
 }
 
