@@ -518,6 +518,9 @@ func srcLabel(s string) string {
 	case "":
 		return "—"
 	}
+	if strings.HasPrefix(s, "whois:") {
+		return "WHOIS/RDAP @ " + strings.TrimPrefix(s, "whois:")
+	}
 	if strings.HasPrefix(s, "reg:") {
 		return strings.TrimPrefix(s, "reg:") + " API"
 	}

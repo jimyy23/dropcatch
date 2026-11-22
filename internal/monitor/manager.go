@@ -28,11 +28,45 @@ type Manager struct {
 	mu         sync.RWMutex
 	cfg        Config
 	whois      *Whois
+	extWhois   []*Whois // external sidecars, in configured order
 	web        map[string]Source
 	registrars []*RegistrarSource
 }
 
 func NewManager(st *store.Store) *Manager { return &Manager{st: st, web: map[string]Source{}} }
+
+// whoisNames lists WHOIS sources in order: internal, then external.
+func (m *Manager) whoisNames() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []string
+	if m.whois != nil {
+		out = append(out, SrcWhois)
+	}
+	for _, w := range m.extWhois {
+		out = append(out, w.Name())
+	}
+	return out
+}
+
+// SetExternalWhois sets the external WHOIS sidecars (fallbacks to the internal one).
+func (m *Manager) SetExternalWhois(ext []*Whois) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.extWhois = nil
+	for _, w := range ext {
+		if w != nil {
+			m.extWhois = append(m.extWhois, w)
+		}
+	}
+}
+
+// ExternalWhois returns the configured external sidecars.
+func (m *Manager) ExternalWhois() []*Whois {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]*Whois(nil), m.extWhois...)
+}
 
 func (m *Manager) Configure(cfg Config, whois *Whois, web []Source, regs []*RegistrarSource) {
 	m.mu.Lock()
@@ -64,8 +98,13 @@ func (m *Manager) SourceNames() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var out []string
-	if m.whois != nil && m.cfg.WhoisEnabled {
-		out = append(out, SrcWhois)
+	if m.cfg.WhoisEnabled {
+		if m.whois != nil {
+			out = append(out, SrcWhois)
+		}
+		for _, w := range m.extWhois {
+			out = append(out, w.Name())
+		}
 	}
 	for _, f := range m.cfg.Fallbacks {
 		if _, ok := m.web[f]; ok {
@@ -88,6 +127,11 @@ func (m *Manager) source(name string) Source {
 			return nil
 		}
 		return m.whois
+	}
+	for _, w := range m.extWhois {
+		if w.Name() == name {
+			return w
+		}
 	}
 	if s, ok := m.web[name]; ok {
 		return s
@@ -117,7 +161,7 @@ func (m *Manager) Plan(suffix string) []string {
 			continue
 		}
 		score := float64(i) * 10 // configured preference
-		if n != SrcWhois {
+		if !IsWhois(n) {
 			total := h.OK + h.Errors
 			if total > 0 {
 				score += 20 * float64(h.Errors) / float64(total) // historical failure rate for this suffix
@@ -127,12 +171,16 @@ func (m *Manager) Plan(suffix string) []string {
 		}
 		cs = append(cs, cand{n, score})
 	}
+	// WHOIS/RDAP sources (internal first, then external in configured order)
+	// always come before web checkers and registrar APIs: they carry the
+	// registration data. The others are ordered by their track record.
 	sort.SliceStable(cs, func(i, j int) bool {
-		if cs[i].name == SrcWhois {
-			return true
+		wi, wj := IsWhois(cs[i].name), IsWhois(cs[j].name)
+		if wi != wj {
+			return wi
 		}
-		if cs[j].name == SrcWhois {
-			return false
+		if wi && wj {
+			return false // keep configured order
 		}
 		return cs[i].score < cs[j].score
 	})
@@ -264,15 +312,29 @@ func (m *Manager) Confirm(ctx context.Context, d domainutil.Name, trigger *Obser
 	m.mu.RLock()
 	whoisOn := m.cfg.WhoisEnabled
 	m.mu.RUnlock()
-	if trigger != nil && trigger.Source == SrcWhois && trigger.Err == nil {
+	if trigger != nil && IsWhois(trigger.Source) && trigger.Err == nil {
 		whoisObs = trigger
-	} else if w := m.source(SrcWhois); w != nil && whoisOn {
-		o := w.Check(ctx, d, true)
-		m.record(d.Suffix, o)
-		whoisObs = &o
+		c.add(*whoisObs, true)
+	} else if whoisOn {
+		// internal sidecar first, then external sidecars until one answers
+		for _, name := range m.whoisNames() {
+			if !m.st.Health(d.Suffix, name).Usable(time.Now()) {
+				continue
+			}
+			src := m.source(name)
+			if src == nil {
+				continue
+			}
+			o := src.Check(ctx, d, true)
+			m.record(d.Suffix, o)
+			c.add(o, false)
+			if o.Err == nil {
+				whoisObs = &o
+				break
+			}
+		}
 	}
 	if whoisObs != nil {
-		c.add(*whoisObs, whoisObs == trigger)
 		c.WhoisChecked = whoisObs.Err == nil
 		c.WhoisAvail = whoisObs.Available()
 		if c.WhoisChecked && !c.WhoisAvail {

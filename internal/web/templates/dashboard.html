@@ -13,7 +13,7 @@
   </nav>
 </div>
 
-{{if not $d.WhoisURL}}<div class="flash err">WHOIS_URL is not set: monitoring runs on fallbacks only (Cloudean, Regery, registrar APIs) and no registration details are available.</div>{{end}}
+{{if not $d.WhoisURL}}<div class="flash err">WHOIS_URL is not set: monitoring uses external WHOIS sidecars (if any) and fallbacks (Cloudean, Regery, registrar APIs).</div>{{end}}
 
 <details class="box add" {{if not $d.Rows}}open{{end}}>
   <summary><b>+ Add domains</b></summary>

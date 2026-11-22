@@ -8,7 +8,7 @@
 <p>Every domain has its own worker, so a slow registry or a long drop-catch on one domain never delays another. Each worker checks at the domain's own interval, or the faster "armed" interval while drop-catch is armed.</p>
 <ol>
   <li><b>WHOIS/RDAP</b> (the whois-domain-lookup sidecar) is the primary source. It reports availability plus registrar, dates, EPP status and nameservers. An empty or unparseable answer is never treated as "available".</li>
-  <li>When WHOIS fails or is rate-limited for a suffix, the check falls back to <b>Cloudean</b> and <b>Regery</b> (keyless web checkers), then to the <b>availability APIs of configured registrars</b>. Availability APIs never place orders.</li>
+  <li>When the internal WHOIS sidecar fails or is rate-limited for a suffix, the check goes to the <b>external WHOIS sidecars</b> (<code>EXTERNAL_WHOIS_API_ENDPOINTS</code>: the same program on other servers, so other IPs and rate-limit budgets), in order. Only when all of them fail does it fall back to <b>Cloudean</b> and <b>Regery</b> (keyless web checkers), then to the <b>availability APIs of configured registrars</b>. Availability APIs never place orders.</li>
   <li>Every answer updates a per-suffix health record. A source that is rate-limited, or fails several times in a row, is <i>benched</i> for that suffix and retried after a cooldown. A source that says it doesn't sell a suffix is skipped for a week. WHOIS returns as primary as soon as it answers again. See <a href="/sources">Sources</a>.</li>
 </ol>
 

@@ -75,7 +75,9 @@ type Source interface {
 }
 
 const (
-	SrcWhois    = "whois"
-	SrcCloudean = "cloudean"
-	SrcRegery   = "regery"
+	SrcWhois = "whois"
+	// SrcWhoisExtPrefix prefixes external WHOIS sidecars: "whois:<host>".
+	SrcWhoisExtPrefix = "whois:"
+	SrcCloudean       = "cloudean"
+	SrcRegery         = "regery"
 )

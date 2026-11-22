@@ -88,23 +88,46 @@ func main() {
 	cloudean := monitor.NewCloudean(30*time.Second, time.Second, 4)
 	regery := monitor.NewRegery(30*time.Second, 60)
 	whois := monitor.NewWhois(env.WhoisURL, env.WhoisPassword, 40*time.Second, 2*time.Second)
+	// External sidecars: same PHP program elsewhere. A shared secret can be set
+	// per endpoint as "url|password" (default: no password).
+	var extWhois []*monitor.Whois
+	for _, e := range env.ExternalWhois {
+		u, pw, _ := strings.Cut(e, "|")
+		if w := monitor.NewExternalWhois(u, pw, 40*time.Second, 2*time.Second); w != nil {
+			extWhois = append(extWhois, w)
+		}
+	}
 	var regSources []*monitor.RegistrarSource
 	for _, r := range regs.Ready() {
 		regSources = append(regSources, monitor.NewRegistrarSource(r, 2*time.Second, 60))
 	}
 	applyMonitor := func() {
-		if whois != nil {
-			whois.SetGap(time.Duration(settings.Int(st, "whois_gap_ms")) * time.Millisecond)
-			whois.SetTimeout(settings.Secs(st, "whois_timeout_s"))
+		for _, w := range append([]*monitor.Whois{whois}, extWhois...) {
+			if w != nil {
+				w.SetGap(time.Duration(settings.Int(st, "whois_gap_ms")) * time.Millisecond)
+				w.SetTimeout(settings.Secs(st, "whois_timeout_s"))
+			}
 		}
 		cloudean.SetGap(time.Duration(settings.Int(st, "cloudean_gap_ms")) * time.Millisecond)
 		regery.SetPerHour(settings.Int(st, "regery_per_hour"))
 		for _, s := range regSources {
 			s.SetPerHour(settings.Int(st, "registrar_checks_per_hour"))
 		}
+		mon.SetExternalWhois(extWhois)
 		mon.Configure(settings.MonitorConfig(st), whois, []monitor.Source{cloudean, regery}, regSources)
 	}
 	applyMonitor()
+	for _, w := range extWhois {
+		go func(w *monitor.Whois) {
+			c, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			if err := w.Ping(c); err != nil {
+				log.Warn("external whois service not reachable", "url", w.BaseURL(), "err", err)
+			} else {
+				log.Info("external whois service reachable", "url", w.BaseURL())
+			}
+		}(w)
+	}
 	if w := mon.Whois(); w != nil {
 		go func() {
 			c, cancel := context.WithTimeout(context.Background(), 20*time.Second)

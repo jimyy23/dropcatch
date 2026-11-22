@@ -20,6 +20,8 @@ import (
 // Whois calls the JSON API of reg233/whois-domain-lookup (sidecar service),
 // which combines port-43 WHOIS, RDAP and web-based WHOIS with per-ccTLD parsers.
 type Whois struct {
+	name    string // source name: "whois" (internal sidecar) or "whois:<host>" (external)
+	label   string
 	base    string
 	auth    string
 	http    *http.Client
@@ -31,7 +33,7 @@ func NewWhois(baseURL, password string, timeout, gap time.Duration) *Whois {
 	if strings.TrimSpace(baseURL) == "" {
 		return nil
 	}
-	w := &Whois{base: strings.TrimRight(strings.TrimSpace(baseURL), "/"), http: &http.Client{}, gates: NewGates(gap)}
+	w := &Whois{name: SrcWhois, label: "WHOIS/RDAP", base: strings.TrimRight(strings.TrimSpace(baseURL), "/"), http: &http.Client{}, gates: NewGates(gap)}
 	w.timeout.Store(int64(timeout))
 	if password != "" {
 		h := sha256.Sum256([]byte(password))
@@ -40,8 +42,30 @@ func NewWhois(baseURL, password string, timeout, gap time.Duration) *Whois {
 	return w
 }
 
-func (w *Whois) Name() string  { return SrcWhois }
-func (w *Whois) Label() string { return "WHOIS/RDAP" }
+// NewExternalWhois is another deployment of the same PHP program on an
+// external server (EXTERNAL_WHOIS_API_ENDPOINTS). It answers with the same
+// JSON API and is tried after the internal sidecar, before web checkers and
+// registrar APIs. Its own per-suffix spacing protects the remote host.
+func NewExternalWhois(baseURL, password string, timeout, gap time.Duration) *Whois {
+	w := NewWhois(baseURL, password, timeout, gap)
+	if w == nil {
+		return nil
+	}
+	host := w.base
+	if u, err := url.Parse(w.base); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	w.name, w.label = SrcWhoisExtPrefix+host, "WHOIS/RDAP @ "+host
+	return w
+}
+
+// IsWhois reports whether a source name is a WHOIS/RDAP lookup (internal or external).
+func IsWhois(name string) bool {
+	return name == SrcWhois || strings.HasPrefix(name, SrcWhoisExtPrefix)
+}
+
+func (w *Whois) Name() string  { return w.name }
+func (w *Whois) Label() string { return w.label }
 func (w *Whois) BaseURL() string {
 	if w == nil {
 		return ""
@@ -89,7 +113,7 @@ type whoisData struct {
 
 func (w *Whois) Check(ctx context.Context, d domainutil.Name, prio bool) Observation {
 	start := time.Now()
-	o := Observation{Source: SrcWhois}
+	o := Observation{Source: w.name}
 	if err := w.gates.Get(d.Suffix).Wait(ctx, prio); err != nil {
 		o.Err = lerr(ErrBusy, "%v", err)
 		return o
@@ -234,25 +258,38 @@ func parseTime(p *string) time.Time {
 	return time.Time{}
 }
 
-// Ping checks the sidecar is reachable.
+// Ping checks the service answers the JSON API. Without a domain, older
+// upstream versions serve the HTML page, so this falls back to a lookup of a
+// permanently registered name (iana.org) and only needs a JSON reply.
 func (w *Whois) Ping(ctx context.Context) error {
 	if w == nil {
 		return fmt.Errorf("disabled")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "GET", w.base+"/src/index.php?json=1", nil)
-	if w.auth != "" {
-		req.Header.Set("Authorization", w.auth)
+	try := func(q string) (whoisEnvelope, error) {
+		var env whoisEnvelope
+		req, _ := http.NewRequestWithContext(ctx, "GET", w.base+"/src/index.php?"+q, nil)
+		req.Header.Set("Accept", "application/json")
+		if w.auth != "" {
+			req.Header.Set("Authorization", w.auth)
+		}
+		resp, err := w.http.Do(req)
+		if err != nil {
+			return env, err
+		}
+		defer resp.Body.Close()
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&env); err != nil {
+			return env, fmt.Errorf("unexpected response (HTTP %d): not the whois-domain-lookup JSON API", resp.StatusCode)
+		}
+		return env, nil
 	}
-	resp, err := w.http.Do(req)
+	env, err := try("json=1")
 	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	var env whoisEnvelope
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&env); err != nil {
-		return fmt.Errorf("unexpected response: %v", err)
+		env, err = try("json=1&domain=iana.org")
+		if err != nil {
+			return err
+		}
 	}
 	if strings.Contains(env.Msg, "Incorrect password") {
 		return fmt.Errorf("credentials rejected")

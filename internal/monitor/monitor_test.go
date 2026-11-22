@@ -2,6 +2,9 @@ package monitor
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -224,5 +227,59 @@ func TestConfirmRule(t *testing.T) {
 	st.ClearHealth("lu", SrcRegery)
 	if c = m.Confirm(context.Background(), d, &whoisAvail, false); c.Confirmed {
 		t.Fatal("unsupported sources must not confirm")
+	}
+}
+
+func TestExternalWhoisFallbackOrder(t *testing.T) {
+	st := newTestStore(t)
+	internalHits, ext1Hits, ext2Hits := 0, 0, 0
+	mk := func(hits *int, body string, status int) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*hits++
+			if r.URL.Path != "/src/index.php" || r.URL.Query().Get("json") != "1" {
+				t.Errorf("unexpected path %s", r.URL)
+			}
+			w.WriteHeader(status)
+			io.WriteString(w, body)
+		}))
+	}
+	registered := `{"code":0,"msg":"Query successful.","data":{"registered":true,"registrar":"GoDaddy","status":[{"text":"Client Hold"}],"nameServers":["a.ns"],"expirationDateISO8601":"2027-03-12T06:40:45Z"}}`
+	rateLimited := `{"code":1,"msg":"WHOIS and RDAP lookups failed for 'x.tw': temporarily unavailable due to rate limiting.","data":{"rateLimited":true}}`
+	internal := mk(&internalHits, rateLimited, 200)
+	defer internal.Close()
+	ext1 := mk(&ext1Hits, ``, 502)
+	defer ext1.Close()
+	ext2 := mk(&ext2Hits, registered, 200)
+	defer ext2.Close()
+
+	m := NewManager(st)
+	cl := &fakeSource{name: SrcCloudean, status: store.StatusAvailable}
+	m.SetExternalWhois([]*Whois{NewExternalWhois(ext1.URL+"/", "", 5*time.Second, 0), NewExternalWhois(ext2.URL, "", 5*time.Second, 0)})
+	m.Configure(Config{WhoisEnabled: true, Fallbacks: []string{SrcCloudean}, ErrorStreak: 3, Cooldown: time.Minute}, NewWhois(internal.URL, "", 5*time.Second, 0), []Source{cl}, nil)
+
+	plan := m.Plan("tw")
+	if len(plan) != 4 || plan[0] != SrcWhois || !IsWhois(plan[1]) || !IsWhois(plan[2]) || plan[3] != SrcCloudean {
+		t.Fatalf("plan should be internal, ext1, ext2, cloudean: %v", plan)
+	}
+	d, _ := domainutil.Parse("bankbazaar.tw")
+	res := m.Check(context.Background(), d, false)
+	if res.Obs.Err != nil || !IsWhois(res.Obs.Source) || res.Obs.Source == SrcWhois || res.Obs.Info == nil || res.Obs.Info.Registrar != "GoDaddy" {
+		t.Fatalf("expected registration data from the second external sidecar, got %+v", res.Obs)
+	}
+	if internalHits != 1 || ext1Hits != 1 || ext2Hits != 1 || cl.calls != 0 {
+		t.Fatalf("hits internal=%d ext1=%d ext2=%d cloudean=%d", internalHits, ext1Hits, ext2Hits, cl.calls)
+	}
+	// the rate-limited internal sidecar is benched for .tw; next check starts at the externals
+	if h := st.Health("tw", SrcWhois); h.Usable(time.Now()) {
+		t.Fatal("rate-limited internal sidecar should be benched for the suffix")
+	}
+	if p := m.Plan("tw"); p[0] == SrcWhois || !IsWhois(p[0]) {
+		t.Fatalf("plan after bench: %v", p)
+	}
+	// confirmation can use an external sidecar's WHOIS answer
+	ext := Observation{Source: res.Obs.Source, Status: store.StatusAvailable}
+	cl.status = store.StatusAvailable
+	if c := m.Confirm(context.Background(), d, &ext, false); !c.Confirmed {
+		t.Fatalf("external WHOIS + Cloudean should confirm: %s", c.Summary())
 	}
 }

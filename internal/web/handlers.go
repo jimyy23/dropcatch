@@ -601,6 +601,7 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	d.Env = [][2]string{
 		{"BASE_URL", e.BaseURL}, {"LISTEN_ADDR", e.Listen}, {"DB_PATH", e.DBPath}, {"TRUST_PROXY", fmt.Sprint(e.TrustProxy)},
 		{"SECURE_COOKIES", fmt.Sprint(e.SecureCookies)}, {"WHOIS_URL", e.WhoisURL}, {"WHOIS_PASSWORD", set(e.WhoisPassword)},
+		{"EXTERNAL_WHOIS_API_ENDPOINTS", externalList(e.ExternalWhois)},
 		{"ORDERS_DRY_RUN", fmt.Sprint(e.OrdersDryRun)},
 		{"REGISTRANT contact", map[bool]string{true: "complete", false: "incomplete"}[e.Contact.Complete()]},
 		{"TWILIO_FROM / TO", e.Twilio.From + " → " + strings.Join(e.Twilio.To, ", ")}, {"TWILIO_AUTH_TOKEN", set(e.Twilio.AuthToken)},
@@ -718,4 +719,17 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) help(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "help", page{Title: "Help", Nav: "help"})
+}
+
+// externalList shows external WHOIS endpoints without their passwords.
+func externalList(eps []string) string {
+	var out []string
+	for _, e := range eps {
+		u, pw, _ := strings.Cut(e, "|")
+		if pw != "" {
+			u += " (password set)"
+		}
+		out = append(out, u)
+	}
+	return strings.Join(out, ", ")
 }

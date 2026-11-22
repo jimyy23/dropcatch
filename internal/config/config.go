@@ -93,6 +93,9 @@ type Env struct {
 
 	WhoisURL      string
 	WhoisPassword string
+	// ExternalWhois are other deployments of the same whois-domain-lookup
+	// program, tried in order when the internal sidecar fails.
+	ExternalWhois []string
 
 	// OrdersDryRun never places real orders (Porkbun uses its dryRun API,
 	// other registrars are simulated). Use it to rehearse a drop.
@@ -153,6 +156,7 @@ func Load() Env {
 		LogLevel:      get("LOG_LEVEL", "info"),
 		WhoisURL:      get("WHOIS_URL", ""),
 		WhoisPassword: get("WHOIS_PASSWORD", ""),
+		ExternalWhois: list("EXTERNAL_WHOIS_API_ENDPOINTS"),
 		OrdersDryRun:  getBool("ORDERS_DRY_RUN", false),
 		Contact: Contact{
 			FirstName: get("REGISTRANT_FIRST_NAME", ""), LastName: get("REGISTRANT_LAST_NAME", ""),
