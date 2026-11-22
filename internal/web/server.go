@@ -512,7 +512,7 @@ func srcLabel(s string) string {
 	case "cloudean":
 		return "Cloudean"
 	case "regery":
-		return "Regery"
+		return "Regery (web)"
 	case "":
 		return "—"
 	}

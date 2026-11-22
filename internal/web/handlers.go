@@ -542,6 +542,7 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 		{"ORDERS_DRY_RUN", fmt.Sprint(e.OrdersDryRun)},
 		{"REGISTRANT contact", map[bool]string{true: "complete", false: "incomplete"}[e.Contact.Complete()]},
 		{"TWILIO_FROM / TO", e.Twilio.From + " → " + strings.Join(e.Twilio.To, ", ")}, {"TWILIO_AUTH_TOKEN", set(e.Twilio.AuthToken)},
+		{"REGERY_CONTACT_ID", e.Regery.ContactID}, {"REGERY_NAMESERVERS", strings.Join(e.Regery.Nameservers, ", ")}, {"REGERY_SERVICES", strings.Join(e.Regery.Services, ", ")},
 		{"TELEGRAM_BOT_TOKEN", set(e.Telegram.BotToken)}, {"TELEGRAM_CHAT_IDS", strings.Join(e.Telegram.ChatIDs, ", ")},
 	}
 	s.render(w, r, "settings", page{Title: "Settings", Nav: "settings", Data: d})

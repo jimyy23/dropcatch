@@ -9,6 +9,7 @@ Orders are paid from the account balance; no card payments are handled.
 | **Porkbun** ([v3](https://porkbun.com/api/json/v3/documentation)) | `POST /domain/checkDomain/{d}` | `POST /domain/create/{d}` `{cost (cents), agreeToTerms:"yes"}`; cost quoted via `dryRun` | no | checks 10 / 10 s / account (bulk-checking accounts throttled to 50 / 5 min); 1 create attempt/s; $100 / order and default $100 / month API spend | keys with `read`+`purchase` scopes, verified email+phone, prepaid credit; premium not allowed |
 | **Internet.bs** ([PDF](https://internetbs.net/internet-bs-api.pdf)) | `/Domain/Check` | `/Domain/Create` (`CloneContactsFromDomain` or `Registrant_/Admin_/Technical_/Billing_*`) | `STATUS=PENDING` | not documented | key bound to server IP |
 | **Netim** ([REST 1.0](https://support.netim.com/en/docs/api-rest-1-0/)) | `GET /domain/{d}/check/` | `POST /domain/{d}/` `{idOwner,idAdmin,idTech,idBilling,duration}` | `StructOperationResponse` `Pending` | 10 concurrent sessions per account (one shared session is used) | owner contact handle |
+| **Regery** ([external API](https://regery.com/partnership/api/introduction)) | `GET /v1/domains/{d}/availability` (`available`, `notAvailable`, `internal`, `restricted`, `notSupported`, `rateLimit`, `error`) | `POST /v1/domains/{d}` `{period, contacts:{registrant}, nameservers}`; registrant from `POST /v1/contacts` (idempotent) | `{"pending":true}`, result in the message queue | not documented (429 / `rateLimit` honoured) | API access granted on request; `Authorization: KEY:SECRET`; a test key enables test mode |
 | **Cloudflare** ([Registrar API beta](https://developers.cloudflare.com/registrar/registrar-api/)) | `POST /accounts/{id}/registrar/domain-check` | `POST /accounts/{id}/registrar/registrations` `{domain_name}`; 201 done / 202 poll `links.self` | yes (polled ~30 s, then reported pending) | 1200 req / 5 min per token | token with Registrar write; default payment method + default registrant contact in dashboard; premium not allowed; 500 domains / account |
 
 ## Outcome mapping
@@ -23,7 +24,11 @@ Orders are paid from the account balance; no card payments are handled.
 | `fatal` | credentials, funds, unsupported TLD, premium, contact data | drop that registrar for the session, log a warning |
 | `dry_run` | `ORDERS_DRY_RUN=true` | nothing purchased |
 
-Fields not shown by the docs (e.g. Netim JSON error bodies) are matched on message text; an
+Regery's docs give no error body format; failures are classified by HTTP status (429 rate
+limited, 401/402/403 fatal, 409 unavailable, 5xx retryable) and message text. Regery's `dns`
+availability source can report held/hidden domains as available; the monitor cross-checks it.
+
+Fields not shown by the docs (e.g. Netim and Regery JSON error bodies) are matched on message text; an
 unrecognised failure is treated as retryable so a drop is never abandoned early.
 
 ## Internet.bs: verified against the test server

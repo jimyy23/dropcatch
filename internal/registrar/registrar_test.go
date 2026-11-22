@@ -264,3 +264,113 @@ func TestNetimSessionAndCheck(t *testing.T) {
 		t.Fatalf("session should be reused, opened %d", sessions)
 	}
 }
+
+// Request/response shapes from https://regery.com/partnership/api/ (2026-11-22).
+func TestRegeryAPI(t *testing.T) {
+	var contactBody, regBody map[string]any
+	contactCalls := 0
+	check := `{"domain":"example.com","source":"dns","result":"available","premium":false}`
+	regStatus, regResp := 200, `{"pending":false}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "KEY:SECRET" || r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("auth/content-type headers: %q %q", r.Header.Get("Authorization"), r.Header.Get("Content-Type"))
+		}
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/domains/example.com/availability":
+			io.WriteString(w, check)
+		case r.Method == "POST" && r.URL.Path == "/v1/contacts":
+			contactCalls++
+			json.NewDecoder(r.Body).Decode(&contactBody)
+			io.WriteString(w, `{"id":"ABCDEFGHIJ"}`)
+		case r.Method == "POST" && r.URL.Path == "/v1/domains/example.com":
+			json.NewDecoder(r.Body).Decode(&regBody)
+			w.WriteHeader(regStatus)
+			io.WriteString(w, regResp)
+		case r.Method == "GET" && r.URL.Path == "/v1/account/balance":
+			io.WriteString(w, `100.00`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	ct := config.Contact{FirstName: "John", LastName: "Doe", Email: "j@example.com", Phone: "+1.23456789", Street: "Wall Street 1", City: "New York", PostalCode: "10005", Country: "US"}
+	r := NewRegery(config.Regery{APIKey: "KEY", APISecret: "SECRET"}, ct, false)
+	r.base = srv.URL
+	ctx := context.Background()
+
+	for body, want := range map[string]bool{
+		`{"domain":"example.com","source":"dns","result":"available","premium":false}`:    true,
+		`{"domain":"example.com","source":"dns","result":"notAvailable","premium":false}`: false,
+		`{"domain":"example.com","result":"internal","premium":null}`:                     false,
+		`{"domain":"example.com","result":"restricted","premium":false}`:                  false,
+	} {
+		check = body
+		a, err := r.Check(ctx, "example.com")
+		if err != nil || a.Available != want {
+			t.Errorf("%s => %+v %v", body, a, err)
+		}
+	}
+	check = `{"domain":"example.com","result":"notSupported"}`
+	if _, err := r.Check(ctx, "example.com"); err != ErrUnsupported {
+		t.Errorf("notSupported => %v", err)
+	}
+	check = `{"domain":"example.com","result":"rateLimit"}`
+	if _, err := r.Check(ctx, "example.com"); err == nil {
+		t.Error("rateLimit must be an error")
+	} else if _, ok := err.(*RateError); !ok {
+		t.Errorf("rateLimit => %T", err)
+	}
+	check = `{"domain":"example.com","result":"error"}`
+	if _, err := r.Check(ctx, "example.com"); err == nil {
+		t.Error("error result must be an error")
+	}
+
+	if b, err := r.Balance(ctx); err != nil || b != 100 {
+		t.Errorf("balance %v %v", b, err)
+	}
+
+	res := r.Register(ctx, "example.com")
+	if res.Outcome != Success {
+		t.Fatalf("register: %+v", res)
+	}
+	d := contactBody["details"].(map[string]any)
+	if d["firstName"] != "John" || d["address1"] != "Wall Street 1" || d["zip"] != "10005" || d["phoneNumber"] != "+1.23456789" || d["countryCode"] != "US" {
+		t.Errorf("contact details: %v", d)
+	}
+	if regBody["period"] != float64(1) || regBody["contacts"].(map[string]any)["registrant"] != "ABCDEFGHIJ" || regBody["nameservers"].(map[string]any)["provider"] != "basic" {
+		t.Errorf("register body: %v", regBody)
+	}
+	regResp = `{"pending":true}`
+	if res := r.Register(ctx, "example.com"); res.Outcome != Pending {
+		t.Errorf("pending => %s", res.Outcome)
+	}
+	if contactCalls != 1 {
+		t.Errorf("contact should be saved once and reused, saved %d times", contactCalls)
+	}
+	for _, c := range []struct {
+		status int
+		body   string
+		want   Outcome
+	}{
+		{429, ``, RateLimited},
+		{401, ``, Fatal},
+		{400, `{"Message":"Insufficient funds"}`, Fatal},
+		{400, `{"Message":"Domain is not available"}`, Unavailable},
+		{500, `oops`, Retryable},
+		{404, ``, Fatal},
+	} {
+		regStatus, regResp = c.status, c.body
+		if res := r.Register(ctx, "example.com"); res.Outcome != c.want {
+			t.Errorf("HTTP %d %s => %s, want %s", c.status, c.body, res.Outcome, c.want)
+		}
+	}
+
+	dry := NewRegery(config.Regery{APIKey: "KEY", APISecret: "SECRET"}, ct, true)
+	dry.base = srv.URL
+	if res := dry.Register(ctx, "example.com"); res.Outcome != DryRun {
+		t.Errorf("dry run => %s", res.Outcome)
+	}
+	if NewRegery(config.Regery{APIKey: "k", APISecret: "s"}, config.Contact{}, false).Problem() == "" {
+		t.Error("missing contact must be reported")
+	}
+}

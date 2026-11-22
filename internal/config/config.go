@@ -46,6 +46,13 @@ type Netim struct {
 	Nameservers                      []string
 }
 
+type Regery struct {
+	APIKey, APISecret string
+	ContactID         string   // existing contact id; empty = saved from REGISTRANT_*
+	Nameservers       []string // empty = Regery default nameservers ("basic")
+	Services          []string // optional contact services, e.g. proxy
+}
+
 type Cloudflare struct {
 	APIToken, AccountID string
 }
@@ -83,6 +90,7 @@ type Env struct {
 	Porkbun    Porkbun
 	InternetBS InternetBS
 	Netim      Netim
+	Regery     Regery
 	Cloudflare Cloudflare
 	Twilio     Twilio
 	Telegram   Telegram
@@ -157,6 +165,10 @@ func Load() Env {
 			OwnerID: get("NETIM_OWNER_ID", ""), AdminID: get("NETIM_ADMIN_ID", netimID),
 			TechID: get("NETIM_TECH_ID", netimID), BillID: get("NETIM_BILLING_ID", netimID),
 			Nameservers: list("NETIM_NAMESERVERS"),
+		},
+		Regery: Regery{
+			APIKey: get("REGERY_API_KEY", ""), APISecret: get("REGERY_API_SECRET", ""),
+			ContactID: get("REGERY_CONTACT_ID", ""), Nameservers: list("REGERY_NAMESERVERS"), Services: list("REGERY_SERVICES"),
 		},
 		Cloudflare: Cloudflare{APIToken: get("CLOUDFLARE_API_TOKEN", ""), AccountID: get("CLOUDFLARE_ACCOUNT_ID", "")},
 		Twilio: Twilio{
