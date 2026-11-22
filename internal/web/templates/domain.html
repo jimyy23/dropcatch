@@ -74,7 +74,7 @@
         <div class="small muted" data-utc-preview></div>
         <p class="small muted">Both optional. Empty = no limit. Values are <b>UTC</b>; the line above shows them in your browser's time zone to catch mistakes.</p>
       </div>
-      <label>monitor every (seconds) while armed <input type="number" name="catch_interval" value="{{$x.CatchInterval}}" min="5"></label>
+      <label>monitor every (seconds) while armed <input type="number" name="catch_interval" value="{{$x.CatchInterval}}" min="1"></label>
       <label>keep placing orders for (minutes) <input type="number" name="catch_duration" value="{{$x.CatchDuration}}" min="1"></label>
       <div class="regs">
         <div class="small muted">Registrars (all selected ones are tried at the same time). Support for .{{$x.Suffix}} from {{if $d.Book}}{{$d.Book.Source}}, {{ago $d.Book.FetchedAt}}{{else}}the price database (not fetched yet){{end}}:</div>

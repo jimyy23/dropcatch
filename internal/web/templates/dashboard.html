@@ -23,7 +23,7 @@
       <textarea name="names" rows="3" placeholder="example.com&#10;müller.de" required></textarea></label>
     <div class="row">
       <label>Monitor every (s) <input type="number" name="monitor_interval" value="{{index $d.Defaults "monitor"}}" min="30"></label>
-      <label>Armed interval (s) <input type="number" name="catch_interval" value="{{index $d.Defaults "catch"}}" min="5"></label>
+      <label>Armed interval (s) <input type="number" name="catch_interval" value="{{index $d.Defaults "catch"}}" min="1"></label>
       <label>Order for (min) <input type="number" name="catch_duration" value="{{index $d.Defaults "dur"}}" min="1"></label>
       <label>Note <input type="text" name="note" size="24"></label>
     </div>

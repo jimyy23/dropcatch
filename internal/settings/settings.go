@@ -27,11 +27,11 @@ type Def struct {
 
 var Defs = []Def{
 	{Group: "Defaults for new domains", Key: "default_monitor_interval", Label: "Monitor interval (s)", Default: "3600", Kind: "int", Min: 30, Max: 7 * 86400},
-	{Group: "Defaults for new domains", Key: "default_catch_interval", Label: "Monitor interval while armed (s)", Default: "60", Kind: "int", Min: 5, Max: 3600},
+	{Group: "Defaults for new domains", Key: "default_catch_interval", Label: "Monitor interval while armed (s)", Default: "60", Kind: "int", Min: 1, Max: 3600},
 	{Group: "Defaults for new domains", Key: "default_catch_duration", Label: "Order attempt duration (min)", Default: "10", Kind: "int", Min: 1, Max: 1440},
 
 	{Group: "Engine", Key: "min_monitor_interval", Label: "Minimum monitor interval (s)", Default: "60", Kind: "int", Min: 5, Max: 3600, Help: "Floor for every domain's normal monitor interval"},
-	{Group: "Engine", Key: "min_catch_interval", Label: "Minimum armed interval (s)", Default: "15", Kind: "int", Min: 2, Max: 600, Help: "Floor while a domain is armed for drop-catch"},
+	{Group: "Engine", Key: "min_catch_interval", Label: "Minimum armed interval (s)", Default: "1", Kind: "int", Min: 1, Max: 600, Help: "Floor applied to every domain's armed interval. Default 1 s, so each domain's own armed interval applies; each source still keeps its own rate limits (WHOIS gap per suffix, Regery budget)"},
 	{Group: "Engine", Key: "order_gap_ms", Label: "Gap between orders per registrar (ms)", Default: "1500", Kind: "int", Min: 200, Max: 60000, Help: "Each registrar also enforces its own documented minimum (≥1 s)"},
 	{Group: "Engine", Key: "error_backoff_max", Label: "Max back-off when every source fails (s)", Default: "1800", Kind: "int", Min: 60, Max: 86400},
 	{Group: "Engine", Key: "confirm_cooldown", Label: "Re-confirm unconfirmed signals after (s)", Default: "900", Kind: "int", Min: 30, Max: 86400, Help: "Flapping WHOIS answers are cross-checked at most this often"},

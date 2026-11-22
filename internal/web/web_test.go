@@ -85,6 +85,16 @@ func TestPagesRenderAndAuth(t *testing.T) {
 	if !d.CatchStart.Equal(time.Date(2030, 1, 2, 3, 4, 0, 0, time.UTC)) || d.CatchDuration != 15 || !d.CatchEnabled {
 		t.Fatalf("settings not saved: start=%s dur=%d", d.CatchStart, d.CatchDuration)
 	}
+	resp, _ = c.PostForm(ts.URL+"/domain/"+id+"/settings", url.Values{"csrf": {csrf}, "monitor_enabled": {"1"}, "catch_enabled": {"1"}, "catch_interval": {"1"}, "registrar": {"porkbun"}, "catch_start": {"2030-01-02T03:04"}, "catch_end": {"2030-01-02T05:00"}})
+	resp.Body.Close()
+	if d, _ := st.GetDomain(ds[0].ID); d.CatchInterval != 1 {
+		t.Fatalf("armed interval of 1 s should be accepted, got %d", d.CatchInterval)
+	}
+	resp, _ = c.PostForm(ts.URL+"/domain/"+id+"/settings", url.Values{"csrf": {csrf}, "catch_interval": {"0"}, "catch_start": {"2030-01-02T03:04"}, "catch_end": {"2030-01-02T05:00"}})
+	resp.Body.Close()
+	if d, _ := st.GetDomain(ds[0].ID); d.CatchInterval != 1 {
+		t.Fatalf("armed interval below 1 s must clamp to 1, got %d", d.CatchInterval)
+	}
 	resp, _ = c.PostForm(ts.URL+"/domain/"+id+"/settings", url.Values{"csrf": {csrf}, "catch_start": {"2030-01-02T03:04"}, "catch_end": {"2030-01-01T00:00"}})
 	resp.Body.Close()
 	if !strings.Contains(resp.Request.URL.RawQuery, "err=") {
