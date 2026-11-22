@@ -605,7 +605,7 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 		{"ORDERS_DRY_RUN", fmt.Sprint(e.OrdersDryRun)},
 		{"REGISTRANT contact", map[bool]string{true: "complete", false: "incomplete"}[e.Contact.Complete()]},
 		{"TWILIO_FROM / TO", e.Twilio.From + " → " + strings.Join(e.Twilio.To, ", ")}, {"TWILIO_AUTH_TOKEN", set(e.Twilio.AuthToken)},
-		{"REGERY_CONTACT_ID", e.Regery.ContactID}, {"REGERY_NAMESERVERS", strings.Join(e.Regery.Nameservers, ", ")}, {"REGERY_SERVICES", strings.Join(e.Regery.Services, ", ")},
+		{"REGERY_CONTACT_ID", e.Regery.ContactID}, {"REGERY_TEST_DOMAIN_TOKEN", e.Regery.TestToken}, {"REGERY_NAMESERVERS", strings.Join(e.Regery.Nameservers, ", ")}, {"REGERY_SERVICES", strings.Join(e.Regery.Services, ", ")},
 		{"NAMESILO_CONTACT_ID", e.NameSilo.ContactID}, {"NAMESILO_PRIVATE", fmt.Sprint(e.NameSilo.Private)},
 		{"SPACESHIP_CONTACT_ID", e.Spaceship.ContactID}, {"SPACESHIP_PRIVACY", fmt.Sprint(e.Spaceship.Privacy)},
 		{"TELEGRAM_BOT_TOKEN", set(e.Telegram.BotToken)}, {"TELEGRAM_CHAT_IDS", strings.Join(e.Telegram.ChatIDs, ", ")},

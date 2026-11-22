@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -267,83 +268,99 @@ func TestNetimSessionAndCheck(t *testing.T) {
 	}
 }
 
-// Request/response shapes from https://regery.com/partnership/api/ (2026-11-22).
+// Shapes from https://regery.com/partnership/api/ and the live test-mode API (2026-11-22).
 func TestRegeryAPI(t *testing.T) {
 	var contactBody, regBody map[string]any
-	contactCalls := 0
-	check := `{"domain":"example.com","source":"dns","result":"available","premium":false}`
+	contactCalls, balanceCalls := 0, 0
+	check := `{"domain":"x-TOKEN.com","source":"dns","result":"available","premium":null}`
 	regStatus, regResp := 200, `{"pending":false}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "KEY:SECRET" || r.Header.Get("Content-Type") != "application/json" {
+		if r.Header.Get("Authorization") != "TST_KEY:SECRET" || r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("auth/content-type headers: %q %q", r.Header.Get("Authorization"), r.Header.Get("Content-Type"))
 		}
 		switch {
-		case r.Method == "GET" && r.URL.Path == "/v1/domains/example.com/availability":
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/availability"):
+			if !strings.Contains(r.URL.Path, "TOKEN") {
+				w.WriteHeader(403)
+				io.WriteString(w, `{"code":"wrongApiKeyMode","message":"Test modes of API key and entity do not match","type":"apiGateway"}`)
+				return
+			}
 			io.WriteString(w, check)
 		case r.Method == "POST" && r.URL.Path == "/v1/contacts":
 			contactCalls++
 			json.NewDecoder(r.Body).Decode(&contactBody)
-			io.WriteString(w, `{"id":"ABCDEFGHIJ"}`)
-		case r.Method == "POST" && r.URL.Path == "/v1/domains/example.com":
+			io.WriteString(w, `{"id":"BFXLWC82L2"}`)
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/domains/"):
 			json.NewDecoder(r.Body).Decode(&regBody)
 			w.WriteHeader(regStatus)
 			io.WriteString(w, regResp)
 		case r.Method == "GET" && r.URL.Path == "/v1/account/balance":
-			io.WriteString(w, `100.00`)
+			balanceCalls++
+			io.WriteString(w, `15.11`)
 		default:
 			w.WriteHeader(404)
 		}
 	}))
 	defer srv.Close()
-	ct := config.Contact{FirstName: "John", LastName: "Doe", Email: "j@example.com", Phone: "+1.23456789", Street: "Wall Street 1", City: "New York", PostalCode: "10005", Country: "US"}
-	r := NewRegery(config.Regery{APIKey: "KEY", APISecret: "SECRET"}, ct, false)
+	ct := config.Contact{FirstName: "John", LastName: "Doe", Email: "j@example.com", Phone: "+1.5555555555", Street: "Wall Street 1", City: "New York", State: "NY", PostalCode: "10005", Country: "US"}
+	r := NewRegery(config.Regery{APIKey: "TST_KEY", APISecret: "SECRET", TestPhone: "+1586.619914145"}, ct, false)
 	r.base = srv.URL
 	ctx := context.Background()
+	if !r.TestMode() {
+		t.Fatal("TST_ key should be test mode")
+	}
 
 	for body, want := range map[string]bool{
-		`{"domain":"example.com","source":"dns","result":"available","premium":false}`:    true,
-		`{"domain":"example.com","source":"dns","result":"notAvailable","premium":false}`: false,
-		`{"domain":"example.com","result":"internal","premium":null}`:                     false,
-		`{"domain":"example.com","result":"restricted","premium":false}`:                  false,
+		`{"domain":"a-TOKEN.com","source":"dns","result":"available","premium":null}`:      true,
+		`{"domain":"xna-TOKEN.com","source":"dns","result":"notAvailable","premium":null}`: false,
+		`{"domain":"a-TOKEN.com","result":"internal","premium":null}`:                      false,
+		`{"domain":"a-TOKEN.com","result":"restricted","premium":false}`:                   false,
 	} {
 		check = body
-		a, err := r.Check(ctx, "example.com")
+		a, err := r.Check(ctx, "a-TOKEN.com")
 		if err != nil || a.Available != want {
 			t.Errorf("%s => %+v %v", body, a, err)
 		}
 	}
-	check = `{"domain":"example.com","result":"notSupported"}`
-	if _, err := r.Check(ctx, "example.com"); err != ErrUnsupported {
+	check = `{"domain":"abc-TOKEN.zzzz","source":"dns","result":"notSupported","premium":null}`
+	if _, err := r.Check(ctx, "abc-TOKEN.zzzz"); err != ErrUnsupported {
 		t.Errorf("notSupported => %v", err)
 	}
-	check = `{"domain":"example.com","result":"rateLimit"}`
-	if _, err := r.Check(ctx, "example.com"); err == nil {
+	if _, err := r.Check(ctx, "example.com"); err != ErrUnsupported {
+		t.Errorf("wrongApiKeyMode (real name with a test key) => %v", err)
+	}
+	check = `{"domain":"a-TOKEN.com","result":"rateLimit"}`
+	if _, err := r.Check(ctx, "a-TOKEN.com"); err == nil {
 		t.Error("rateLimit must be an error")
 	} else if _, ok := err.(*RateError); !ok {
 		t.Errorf("rateLimit => %T", err)
 	}
-	check = `{"domain":"example.com","result":"error"}`
-	if _, err := r.Check(ctx, "example.com"); err == nil {
-		t.Error("error result must be an error")
+
+	for i := 0; i < 3; i++ {
+		if b, err := r.Balances(ctx); err != nil || len(b) != 1 || b[0].Amount != "15.11" {
+			t.Errorf("balance %v %v", b, err)
+		}
+	}
+	if balanceCalls != 1 {
+		t.Errorf("balance must be cached (API allows 4/hour), called %d times", balanceCalls)
 	}
 
-	if b, err := r.Balances(ctx); err != nil || len(b) != 1 || b[0].Amount != "100.00" {
-		t.Errorf("balance %v %v", b, err)
-	}
-
-	res := r.Register(ctx, "example.com")
+	res := r.Register(ctx, "dctest-TOKEN.com")
 	if res.Outcome != Success {
 		t.Fatalf("register: %+v", res)
 	}
 	d := contactBody["details"].(map[string]any)
-	if d["firstName"] != "John" || d["address1"] != "Wall Street 1" || d["zip"] != "10005" || d["phoneNumber"] != "+1.23456789" || d["countryCode"] != "US" {
-		t.Errorf("contact details: %v", d)
+	if d["state"] != "US_NY" || d["phoneNumber"] != "+1586.619914145" || d["countryCode"] != "US" || d["address1"] != "Wall Street 1" || d["zip"] != "10005" {
+		t.Errorf("contact details (state must be US_NY, test phone in test mode): %v", d)
 	}
-	if regBody["period"] != float64(1) || regBody["contacts"].(map[string]any)["registrant"] != "ABCDEFGHIJ" || regBody["nameservers"].(map[string]any)["provider"] != "basic" {
+	if !strings.Contains(fmt.Sprint(contactBody["name"]), "US_NY") {
+		t.Errorf("contact name should encode the region: %v", contactBody["name"])
+	}
+	if regBody["period"] != float64(1) || regBody["autoRenew"] != false || regBody["contacts"].(map[string]any)["registrant"] != "BFXLWC82L2" || regBody["nameservers"].(map[string]any)["provider"] != "basic" {
 		t.Errorf("register body: %v", regBody)
 	}
 	regResp = `{"pending":true}`
-	if res := r.Register(ctx, "example.com"); res.Outcome != Pending {
+	if res := r.Register(ctx, "dctest-TOKEN.com"); res.Outcome != Pending {
 		t.Errorf("pending => %s", res.Outcome)
 	}
 	if contactCalls != 1 {
@@ -354,26 +371,36 @@ func TestRegeryAPI(t *testing.T) {
 		body   string
 		want   Outcome
 	}{
-		{429, ``, RateLimited},
+		{500, `{"code":"objectExists","message":"domain 'dctest-TOKEN.com' already exists","type":"domains"}`, Unavailable},
+		{400, `{"parameter":"registrant.state","value":null,"rules":{},"code":"valueRequired","message":"Contact field value is required: registrant.state for x.com","type":"validation"}`, Fatal},
+		{400, `{"parameter":"registrant.state","value":"ON","rules":{"country":"CA"},"code":"valueInvalid","message":"Contact field value must represent valid state/province code for the country","type":"validation"}`, Fatal},
+		{403, `{"code":"wrongApiKeyMode","message":"Test modes of API key and entity do not match","type":"apiGateway"}`, Fatal},
+		{429, `{"code":"rateLimit","message":"Rate exceeded. [10/00:01:00] with cooldown: 00:01:00","type":"apiGateway"}`, RateLimited},
 		{401, ``, Fatal},
-		{400, `{"Message":"Insufficient funds"}`, Fatal},
-		{400, `{"Message":"Domain is not available"}`, Unavailable},
-		{500, `oops`, Retryable},
-		{404, ``, Fatal},
+		{502, `oops`, Retryable},
 	} {
 		regStatus, regResp = c.status, c.body
-		if res := r.Register(ctx, "example.com"); res.Outcome != c.want {
-			t.Errorf("HTTP %d %s => %s, want %s", c.status, c.body, res.Outcome, c.want)
+		res := r.Register(ctx, "x-TOKEN.com")
+		if res.Outcome != c.want {
+			t.Errorf("HTTP %d %s => %s (%s), want %s", c.status, c.body, res.Outcome, res.Message, c.want)
+		}
+		if c.want == RateLimited && res.RetryAfter != time.Minute {
+			t.Errorf("cooldown should be parsed from the message, got %s", res.RetryAfter)
 		}
 	}
 
-	dry := NewRegery(config.Regery{APIKey: "KEY", APISecret: "SECRET"}, ct, true)
+	dry := NewRegery(config.Regery{APIKey: "K", APISecret: "S"}, ct, true)
 	dry.base = srv.URL
 	if res := dry.Register(ctx, "example.com"); res.Outcome != DryRun {
 		t.Errorf("dry run => %s", res.Outcome)
 	}
-	if NewRegery(config.Regery{APIKey: "k", APISecret: "s"}, config.Contact{}, false).Problem() == "" {
-		t.Error("missing contact must be reported")
+	noState := ct
+	noState.State = ""
+	if NewRegery(config.Regery{APIKey: "k", APISecret: "s"}, noState, false).Problem() == "" {
+		t.Error("missing state must be reported")
+	}
+	if regionCode("CA", "on") != "CA_ON" || regionCode("US", "US_NY") != "US_NY" {
+		t.Error("regionCode")
 	}
 }
 

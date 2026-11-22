@@ -47,7 +47,9 @@ type Netim struct {
 }
 
 type Regery struct {
-	APIKey, APISecret string
+	APIKey, APISecret string   // REGERY_API_KEY / REGERY_API_SECRET (test keys start with TST_)
+	TestToken         string   // test domain token: test keys only accept names containing it
+	TestPhone         string   // test phone number, used for contacts in test mode
 	ContactID         string   // existing contact id; empty = saved from REGISTRANT_*
 	Nameservers       []string // empty = Regery default nameservers ("basic")
 	Services          []string // optional contact services, e.g. proxy
@@ -186,7 +188,8 @@ func Load() Env {
 			Nameservers: list("NETIM_NAMESERVERS"),
 		},
 		Regery: Regery{
-			APIKey: get("REGERY_API_KEY", ""), APISecret: get("REGERY_API_SECRET", ""),
+			APIKey: get("REGERY_API_KEY", ""), APISecret: get("REGERY_API_SECRET", get("REGERY_API_KEY_SECRET", "")),
+			TestToken: get("REGERY_TEST_DOMAIN_TOKEN", ""), TestPhone: get("REGERY_TEST_PHONE", ""),
 			ContactID: get("REGERY_CONTACT_ID", ""), Nameservers: list("REGERY_NAMESERVERS"), Services: list("REGERY_SERVICES"),
 		},
 		NameSilo: NameSilo{
