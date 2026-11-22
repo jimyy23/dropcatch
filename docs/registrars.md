@@ -11,6 +11,7 @@ Orders are paid from the account balance; no card payments are handled.
 | **Netim** ([REST 1.0](https://support.netim.com/en/docs/api-rest-1-0/)) | `GET /domain/{d}/check/` | `POST /domain/{d}/` `{idOwner,idAdmin,idTech,idBilling,duration}` | `StructOperationResponse` `Pending` | 10 concurrent sessions per account (one shared session is used) | owner contact handle |
 | **Regery** ([external API](https://regery.com/partnership/api/introduction)) | `GET /v1/domains/{d}/availability` (`available`, `notAvailable`, `internal`, `restricted`, `notSupported`, `rateLimit`, `error`) | `POST /v1/domains/{d}` `{period, contacts:{registrant}, nameservers}`; registrant from `POST /v1/contacts` (idempotent) | `{"pending":true}`, result in the message queue | not documented (429 / `rateLimit` honoured) | API access granted on request; `Authorization: KEY:SECRET`; a test key enables test mode |
 | **NameSilo** ([API](https://www.namesilo.com/api-reference)) | `GET /api/checkRegisterAvailability?domains=` (`available[]` with price/premium, `unavailable`, `invalid`) | `GET /api/registerDomain?domain=&years=1` + `contact_id` or inline `fn,ln,ad,cy,st,zp,ct,em,ph`; no `payment_id` = account funds | no (301/302 = success with defaults) | not documented (code 400 = previous request still processing) | API key (optionally IP-bound); all calls GET |
+| **Spaceship** ([API](https://docs.spaceship.dev/)) | `GET /v1/domains/{d}/available` (`available`, `taken`, `invalidDomainName`, `tldNotSupported`, `unexpectedError`; premium via `premiumPricing`) | `POST /v1/domains/{d}` `{autoRenew:false, years:1, privacyProtection:{level,userConsent}, contacts:{registrant,admin,tech,billing}}`; contact from `SPACESHIP_CONTACT_ID` or `PUT /v1/contacts` | 202 + `spaceship-async-operationid`, polled via `GET /v1/async-operations/{id}` (~45 s, then reported pending) | check 5/domain/300 s & 30/user/30 s; register 30/user/30 s; async status 60/300 s | `X-API-Key` + `X-API-Secret`; scopes domains:read, domains:billing, contacts:read/write, asyncoperations:read |
 | **Cloudflare** ([Registrar API beta](https://developers.cloudflare.com/registrar/registrar-api/)) | `POST /accounts/{id}/registrar/domain-check` | `POST /accounts/{id}/registrar/registrations` `{domain_name}`; 201 done / 202 poll `links.self` | yes (polled ~30 s, then reported pending) | 1200 req / 5 min per token | token with Registrar write; default payment method + default registrant contact in dashboard; premium not allowed; 500 domains / account |
 
 ## Outcome mapping
@@ -65,6 +66,7 @@ real `SUCCESS` cannot be produced there; the success shapes from the PDF (`statu
 | Regery | `GET /v1/account/balance` → number | no keys |
 | NameSilo | `getAccountBalance` → `balance` | yes |
 | Cloudflare | none: registrations are charged to the account's payment method | n/a |
+| Spaceship | none in the API | n/a |
 
 Dynadot note: the docs include `X-Request-ID` in the string to sign, but the live API only accepts
 signatures whose request-id line is empty (`key\npath\n\nbody`), verified 2026-11-22.
@@ -85,3 +87,12 @@ are handled and unit-tested:
 | unsupported TLD | `"invalid": {"domain":"foobar123.lu"}` or `["foobar123.lu", ...]` |
 
 NameSilo does not sell `.lu` or `.tw` (reported as `invalid`).
+
+## Spaceship: verified against production (read-only)
+
+`LIVE_SPACESHIP=1 go test ./internal/registrar -run LiveSpaceship -v` calls only
+`GET /v1/domains/{d}/available` and `GET /v1/contacts/{id}`. Observed: `example.com` → `taken`,
+an unused `.com` → `available`, `.lu`/`.tw` → `tldNotSupported`, `bad_name!.com` →
+`invalidDomainName`. Errors are `application/problem+json` `{detail}` with a
+`spaceship-error-code` header; mapped by HTTP status and code text (429 back off, 401/403 fatal,
+400/422 validation fatal unless "not available", 5xx retry).

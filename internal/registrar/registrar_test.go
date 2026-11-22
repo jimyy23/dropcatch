@@ -477,3 +477,112 @@ func TestNameSilo(t *testing.T) {
 		t.Errorf("contact_id mode: %v", lastQ)
 	}
 }
+
+// Shapes from https://docs.spaceship.dev/ and live GET /available (2026-11-22).
+func TestSpaceship(t *testing.T) {
+	check := `{"domain":"x.com","result":"available","premiumPricing":[]}`
+	regStatus, regErrCode, regBody := 202, "", ``
+	opStatus := "pending"
+	var regReq, contactReq map[string]any
+	polls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != "K" || r.Header.Get("X-API-Secret") != "S" {
+			t.Errorf("auth headers missing")
+		}
+		w.Header().Set("spaceship-operation-id", "0123456789abcdef")
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/available"):
+			io.WriteString(w, check)
+		case r.Method == "PUT" && r.URL.Path == "/v1/contacts":
+			json.NewDecoder(r.Body).Decode(&contactReq)
+			io.WriteString(w, `{"contactId":"1ZdMXpapqp9sle5dl8BlppTJXAzf5"}`)
+		case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/v1/domains/"):
+			json.NewDecoder(r.Body).Decode(&regReq)
+			if regStatus == 202 {
+				w.Header().Set("spaceship-async-operationid", "op123")
+				w.WriteHeader(202)
+				return
+			}
+			w.Header().Set("spaceship-error-code", regErrCode)
+			w.Header().Set("Content-Type", "application/problem+json")
+			if regStatus == 429 {
+				w.Header().Set("Retry-After", "12")
+			}
+			w.WriteHeader(regStatus)
+			io.WriteString(w, regBody)
+		case r.Method == "GET" && r.URL.Path == "/v1/async-operations/op123":
+			polls++
+			st := opStatus
+			if polls < 2 {
+				st = "pending"
+			}
+			io.WriteString(w, `{"status":"`+st+`","type":"domains_Create","details":{},"createdAt":"2026-11-22T00:00:00Z"}`)
+		default:
+			w.WriteHeader(404)
+			io.WriteString(w, `{"detail":"not found"}`)
+		}
+	}))
+	defer srv.Close()
+	ct := config.Contact{FirstName: "John", LastName: "Doe", Email: "j@example.com", Phone: "+1.5555555555", Street: "1 Main St", City: "Toronto", State: "ON", PostalCode: "M5V 1A1", Country: "CA"}
+	s := NewSpaceship(config.Spaceship{APIKey: "K", APISecret: "S", Privacy: true}, ct, false)
+	s.base, s.pollEvery = srv.URL, 10*time.Millisecond
+	ctx := context.Background()
+
+	for body, want := range map[string]bool{
+		`{"domain":"dropcatch-ss-probe-81723.com","result":"available","premiumPricing":[]}`: true,
+		`{"domain":"example.com","result":"taken","premiumPricing":[]}`:                      false,
+	} {
+		check = body
+		if a, err := s.Check(ctx, "x.com"); err != nil || a.Available != want {
+			t.Errorf("%s => %+v %v", body, a, err)
+		}
+	}
+	for _, body := range []string{`{"domain":"foobar123.lu","result":"tldNotSupported","premiumPricing":[]}`, `{"domain":"bad_name!.com","result":"invalidDomainName","premiumPricing":[]}`} {
+		check = body
+		if _, err := s.Check(ctx, "x.lu"); err != ErrUnsupported {
+			t.Errorf("%s => %v", body, err)
+		}
+	}
+	check = `{"domain":"rare.io","result":"available","premiumPricing":[{"operation":"register","price":2500,"currency":"USD"}]}`
+	if a, _ := s.Check(ctx, "rare.io"); !a.Premium || !a.Available {
+		t.Errorf("premium: %+v", a)
+	}
+
+	opStatus = "success"
+	res := s.Register(ctx, "x.com")
+	if res.Outcome != Success || res.Ref != "op123" {
+		t.Fatalf("register: %+v", res)
+	}
+	if contactReq["firstName"] != "John" || contactReq["country"] != "CA" || contactReq["stateProvince"] != "ON" || contactReq["phone"] != "+1.5555555555" {
+		t.Errorf("contact body: %v", contactReq)
+	}
+	c := regReq["contacts"].(map[string]any)
+	pp := regReq["privacyProtection"].(map[string]any)
+	if regReq["years"] != float64(1) || regReq["autoRenew"] != false || pp["level"] != "high" || pp["userConsent"] != true || c["registrant"] != "1ZdMXpapqp9sle5dl8BlppTJXAzf5" || c["billing"] != c["registrant"] {
+		t.Errorf("register body: %v", regReq)
+	}
+	polls, opStatus = 0, "failed"
+	if res := s.Register(ctx, "x.com"); res.Outcome == Success || res.Outcome == Pending {
+		t.Errorf("failed operation => %s", res.Outcome)
+	}
+	for _, c := range []struct {
+		status     int
+		code, body string
+		want       Outcome
+	}{
+		{429, "application.rateLimit", `{"detail":"Too many requests"}`, RateLimited},
+		{401, "application.unauthorized", `{"detail":"Unauthorized"}`, Fatal},
+		{403, "application.forbidden", `{"detail":"Not allowed with the current scopes"}`, Fatal},
+		{422, "business.domain.notAvailable", `{"detail":"Domain is not available"}`, Unavailable},
+		{422, "business.validation", `{"detail":"Validation failed","data":[{"field":"contacts.registrant","details":"invalid"}]}`, Fatal},
+		{500, "infrastructure.unexpected", `{"detail":"Unexpected error"}`, Retryable},
+	} {
+		regStatus, regErrCode, regBody = c.status, c.code, c.body
+		if res := s.Register(ctx, "x.com"); res.Outcome != c.want {
+			t.Errorf("HTTP %d %s => %s (%s), want %s", c.status, c.code, res.Outcome, res.Message, c.want)
+		}
+	}
+	if ok, err := s.ContactExists(ctx, "missing"); ok || err != nil {
+		t.Errorf("missing contact: %v %v", ok, err)
+	}
+}

@@ -47,6 +47,7 @@ func TestLiveBalances(t *testing.T) {
 		NewCloudflare(env.Cloudflare, true),
 		NewRegery(env.Regery, env.Contact, true),
 		NewNameSilo(env.NameSilo, env.Contact, true),
+		NewSpaceship(env.Spaceship, env.Contact, true),
 	}
 	for _, r := range regs {
 		if !r.Configured() {

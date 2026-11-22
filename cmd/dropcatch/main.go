@@ -67,6 +67,7 @@ func main() {
 		registrar.NewCloudflare(env.Cloudflare, env.OrdersDryRun),
 		registrar.NewRegery(env.Regery, env.Contact, env.OrdersDryRun),
 		registrar.NewNameSilo(env.NameSilo, env.Contact, env.OrdersDryRun),
+		registrar.NewSpaceship(env.Spaceship, env.Contact, env.OrdersDryRun),
 	)
 	for _, r := range regs.All() {
 		switch {

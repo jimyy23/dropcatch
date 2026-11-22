@@ -60,6 +60,12 @@ type NameSilo struct {
 	Nameservers []string // empty = NameSilo defaults
 }
 
+type Spaceship struct {
+	APIKey, APISecret string
+	ContactID         string // contact id for registrant/admin/tech/billing; empty = REGISTRANT_* saved via PUT /v1/contacts
+	Privacy           bool   // privacy protection level "high"
+}
+
 type Cloudflare struct {
 	APIToken, AccountID string
 }
@@ -99,6 +105,7 @@ type Env struct {
 	Netim      Netim
 	Regery     Regery
 	NameSilo   NameSilo
+	Spaceship  Spaceship
 	Cloudflare Cloudflare
 	Twilio     Twilio
 	Telegram   Telegram
@@ -181,6 +188,10 @@ func Load() Env {
 		NameSilo: NameSilo{
 			APIKey: get("NAMESILO_API_KEY", ""), ContactID: get("NAMESILO_CONTACT_ID", ""),
 			Private: getBool("NAMESILO_PRIVATE", true), Nameservers: list("NAMESILO_NAMESERVERS"),
+		},
+		Spaceship: Spaceship{
+			APIKey: get("SPACESHIP_API_KEY", ""), APISecret: get("SPACESHIP_API_SECRET", ""),
+			ContactID: get("SPACESHIP_CONTACT_ID", ""), Privacy: getBool("SPACESHIP_PRIVACY", true),
 		},
 		Cloudflare: Cloudflare{APIToken: get("CLOUDFLARE_API_TOKEN", ""), AccountID: get("CLOUDFLARE_ACCOUNT_ID", "")},
 		Twilio: Twilio{
