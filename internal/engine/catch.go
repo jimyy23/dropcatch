@@ -39,10 +39,19 @@ var (
 // the session duration (or catch window) ends, or the admin stops it. It runs
 // on the domain's own worker, so other domains are unaffected.
 func (e *Engine) runCatch(parent context.Context, w *worker, d *store.Domain, name domainutil.Name, trigger monitor.Observation) {
+	e.runSession(parent, w, d, name, trigger, false, "")
+}
+
+// runSession is the shared order loop. manual=true is an admin-initiated
+// "register now": no availability check, no catch-window limit, and the
+// master monitor does not end it (the admin asked to try regardless); it
+// still ends on success, pending, all registrars failing, the duration, or
+// stop.
+func (e *Engine) runSession(parent context.Context, w *worker, d *store.Domain, name domainutil.Name, trigger monitor.Observation, manual bool, by string) {
 	cfg := e.config()
 	start := time.Now()
 	deadline := start.Add(time.Duration(d.CatchDuration) * time.Minute)
-	if d.CatchEnabled && !d.CatchEnd.IsZero() && d.CatchEnd.Before(deadline) && !(d.AutoCatchPD && d.PendingDelete) {
+	if !manual && d.CatchEnabled && !d.CatchEnd.IsZero() && d.CatchEnd.Before(deadline) && !(d.AutoCatchPD && d.PendingDelete) {
 		deadline = d.CatchEnd
 	}
 	var regs []registrar.Registrar
@@ -61,11 +70,18 @@ func (e *Engine) runCatch(parent context.Context, w *worker, d *store.Domain, na
 		}
 	}
 	if len(regs) == 0 {
-		e.st.AddEvent(d.ID, "catch_skipped", "warn", "domain available but no usable registrar: "+strings.Join(skipped, ", "))
+		why := "domain available but no usable registrar: "
+		if manual {
+			why = "manual register: no usable registrar: "
+		}
+		e.st.AddEvent(d.ID, "catch_skipped", "warn", why+strings.Join(skipped, ", "))
 		return
 	}
 	e.st.StartCatch(d.ID, deadline)
 	msg := fmt.Sprintf("drop-catch started on %s signal from %s; registrars: %s; until %s UTC", trigger.Status, trigger.Source, labels(regs), deadline.UTC().Format("2006-01-02 15:04:05"))
+	if manual {
+		msg = fmt.Sprintf("MANUAL register started by %s (no availability check); registrars: %s; until %s UTC", by, labels(regs), deadline.UTC().Format("2006-01-02 15:04:05"))
+	}
 	if len(skipped) > 0 {
 		msg += "; skipped: " + strings.Join(skipped, ", ")
 	}
@@ -170,9 +186,14 @@ func (e *Engine) runCatch(parent context.Context, w *worker, d *store.Domain, na
 	// Master monitor: stop when the domain is registered by someone else.
 	// Two consecutive "registered" answers are required because registries
 	// flap; one of our own orders succeeding is handled above (won).
+	// Manual sessions skip it: the admin asked to order regardless.
 	monDone := make(chan struct{})
 	go func() {
 		defer close(monDone)
+		if manual {
+			<-cctx.Done()
+			return
+		}
 		interval := time.Duration(d.CatchInterval) * time.Second
 		if interval < cfg.MinCatchInterval {
 			interval = cfg.MinCatchInterval
@@ -246,6 +267,9 @@ func (e *Engine) runCatch(parent context.Context, w *worker, d *store.Domain, na
 		result = fmt.Sprintf("every registrar failed permanently after %d attempts (see registrar_dropped events)", attempts.Load())
 	default:
 		result = fmt.Sprintf("duration elapsed without success (%d attempts)", attempts.Load())
+	}
+	if manual {
+		result = "manual register: " + result
 	}
 	e.st.EndCatch(d.ID, state, result, winner)
 	e.st.AddEvent(d.ID, "catch_"+state, level, result)

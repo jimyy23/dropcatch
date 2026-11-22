@@ -166,3 +166,28 @@ func (s *Set) Keys() []string {
 	}
 	return out
 }
+
+// Balance is one currency balance of a registrar account.
+type Balance struct {
+	Amount   string // as reported (decimal string)
+	Currency string // ISO code when known
+	Note     string // extra info (e.g. price level, thresholds)
+}
+
+// BalanceReader is implemented by registrars whose API exposes the account
+// balance. Calls are read-only.
+type BalanceReader interface {
+	Balances(ctx context.Context) ([]Balance, error)
+}
+
+// ErrNoBalanceAPI is returned for registrars without a balance endpoint.
+var ErrNoBalanceAPI = errors.New("the registrar API has no balance endpoint")
+
+// AccountBalances queries one registrar.
+func AccountBalances(ctx context.Context, r Registrar) ([]Balance, error) {
+	b, ok := r.(BalanceReader)
+	if !ok {
+		return nil, ErrNoBalanceAPI
+	}
+	return b.Balances(ctx)
+}

@@ -101,7 +101,14 @@ func TestPagesRenderAndAuth(t *testing.T) {
 		t.Fatal("end before start should be rejected")
 	}
 
-	for _, p := range []string{"/", "/?f=armed", "/domain/" + id, "/orders", "/events", "/events?level=alert", "/sources", "/settings", "/users", "/account", "/help", "/domains.json"} {
+	// manual register needs the exact domain name
+	resp, _ = c.PostForm(ts.URL+"/domain/"+id+"/register-now", url.Values{"csrf": {csrf}, "confirm": {"wrong.com"}})
+	resp.Body.Close()
+	if !strings.Contains(resp.Request.URL.RawQuery, "err=") {
+		t.Fatal("register-now without the exact confirmation must be refused")
+	}
+
+	for _, p := range []string{"/", "/?f=armed", "/domain/" + id, "/orders", "/registrars", "/events", "/events?level=alert", "/sources", "/settings", "/users", "/account", "/help", "/domains.json"} {
 		resp, err := c.Get(ts.URL + p)
 		if err != nil {
 			t.Fatal(err)

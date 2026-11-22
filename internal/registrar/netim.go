@@ -230,3 +230,31 @@ func (n *Netim) Register(ctx context.Context, domain string) Result {
 	}
 	return Result{Outcome: Pending, Ref: ref, Message: op.Status + " " + op.Message}
 }
+
+// Balances reads GET /account/ (StructQueryResellerAccount).
+func (n *Netim) Balances(ctx context.Context) ([]Balance, error) {
+	code, raw, err := n.do(ctx, "GET", "/account/", nil)
+	if err != nil {
+		return nil, err
+	}
+	if code != 200 {
+		return nil, fmt.Errorf("netim account HTTP %d: %s", code, trunc(string(raw), 200))
+	}
+	var r map[string]any
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil, fmt.Errorf("netim: bad account response")
+	}
+	get := func(k string) string {
+		for kk, v := range r {
+			if strings.EqualFold(kk, k) && v != nil {
+				return fmt.Sprint(v)
+			}
+		}
+		return ""
+	}
+	note := ""
+	if l := get("BALANCE_LOW_LIMIT"); l != "" {
+		note = "low limit " + l + ", hard limit " + get("BALANCE_HARD_LIMIT")
+	}
+	return []Balance{{Amount: get("BALANCE_AMOUNT"), Currency: "EUR", Note: note}}, nil
+}

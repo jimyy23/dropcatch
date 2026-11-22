@@ -1,0 +1,21 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1>Registrars</h1>
+<p class="muted">API credentials come from <code>.env</code>. Balances are read live (read-only calls) when this page loads, at {{datetime $d.Checked}} UTC. <a href="/registrars">refresh</a></p>
+<table class="compact">
+  <tr><th>registrar</th><th>credentials</th><th>status</th><th>account balance</th></tr>
+  {{range $d.Rows}}
+  <tr>
+    <td><b>{{.Label}}</b> <span class="muted small">{{.Key}}</span></td>
+    <td>{{if .Configured}}<span class="st-registered">set</span>{{else}}<span class="muted">not set</span>{{end}}</td>
+    <td class="small">{{if not .Configured}}<span class="muted">unused</span>{{else if .Problem}}<span class="st-error">{{.Problem}}</span>{{else}}<span class="st-registered">ready</span>{{end}}</td>
+    <td>
+      {{if not .Configured}}<span class="muted">—</span>
+      {{else if .NoAPI}}<span class="muted small">no balance endpoint in this API (charged to the account's payment method)</span>
+      {{else if .Err}}<span class="st-error small wrap">{{.Err}}</span>
+      {{else}}{{range .Balances}}<div><b>{{.Amount}}</b> {{.Currency}} {{if .Note}}<span class="muted small">{{.Note}}</span>{{end}}</div>{{else}}<span class="muted">no balance reported</span>{{end}}{{end}}
+    </td>
+  </tr>
+  {{end}}
+</table>
+{{end}}

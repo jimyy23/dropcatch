@@ -269,3 +269,40 @@ func ibsCreateResult(r *ibsResp) Result {
 	}
 	return res
 }
+
+// Balances reads /Account/Balance/Get.
+func (b *InternetBS) Balances(ctx context.Context) ([]Balance, error) {
+	p := url.Values{"ApiKey": {b.c.APIKey}, "Password": {b.c.Password}, "ResponseFormat": {"JSON"}}
+	req, err := http.NewRequestWithContext(ctx, "POST", b.base+"/Account/Balance/Get", strings.NewReader(p.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := b.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var r struct {
+		Status  string `json:"status"`
+		Message string `json:"message"`
+		Balance []struct {
+			Currency string      `json:"currency"`
+			Amount   json.Number `json:"amount"`
+		} `json:"balance"`
+	}
+	dec := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
+	dec.UseNumber()
+	if err := dec.Decode(&r); err != nil {
+		return nil, fmt.Errorf("internet.bs balance HTTP %d", resp.StatusCode)
+	}
+	if !strings.EqualFold(r.Status, "SUCCESS") {
+		return nil, fmt.Errorf("internet.bs: %s", r.Message)
+	}
+	var out []Balance
+	for _, x := range r.Balance {
+		f, _ := x.Amount.Float64()
+		out = append(out, Balance{Amount: fmt.Sprintf("%.2f", f), Currency: x.Currency})
+	}
+	return out, nil
+}

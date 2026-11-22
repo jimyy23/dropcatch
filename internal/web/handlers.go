@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"dropcatch/internal/domainutil"
@@ -425,6 +426,71 @@ func (s *Server) domainCatchStop(w http.ResponseWriter, r *http.Request) {
 		msg = "Stopping the drop-catch session."
 	}
 	redirect(w, r, fmt.Sprintf("/domain/%d", id), msg, "")
+}
+
+// domainRegisterNow starts an immediate register session with every selected
+// registrar, skipping the availability check. The confirmation phrase guards
+// against accidental purchases.
+func (s *Server) domainRegisterNow(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r)
+	back := fmt.Sprintf("/domain/%d", id)
+	d, err := s.St.GetDomain(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if strings.TrimSpace(strings.ToLower(r.FormValue("confirm"))) != strings.ToLower(d.Name) && strings.TrimSpace(strings.ToLower(r.FormValue("confirm"))) != strings.ToLower(d.UName) {
+		redirect(w, r, back, "", "type the domain name exactly to confirm the manual register")
+		return
+	}
+	if err := s.Eng.RegisterNow(id, user(r).Username); err != nil {
+		redirect(w, r, back, "", err.Error())
+		return
+	}
+	s.Log.Warn("manual register started", "domain", d.Name, "by", user(r).Username)
+	msg := "Manual register started: orders are going out to " + strings.Join(d.CatchRegistrars, ", ") + " now."
+	if s.Env.OrdersDryRun {
+		msg += " (ORDERS_DRY_RUN is on: nothing will be bought.)"
+	}
+	redirect(w, r, back, msg, "")
+}
+
+// ---- registrars & balances
+
+type registrarRow struct {
+	registrar.Info
+	Balances []registrar.Balance
+	Err      string
+	NoAPI    bool
+}
+
+func (s *Server) registrarsPage(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	all := s.Eng.Registrars().All()
+	rows := make([]registrarRow, len(all))
+	var wg sync.WaitGroup
+	for i, rg := range all {
+		rows[i].Info = registrar.Info{Key: rg.Key(), Label: rg.Label(), PriceKey: rg.PriceKey(), Configured: rg.Configured(), Problem: rg.Problem()}
+		if !rg.Configured() || r.URL.Query().Get("balances") == "0" {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, rg registrar.Registrar) {
+			defer wg.Done()
+			b, err := registrar.AccountBalances(ctx, rg)
+			switch {
+			case err == registrar.ErrNoBalanceAPI:
+				rows[i].NoAPI = true
+			case err != nil:
+				rows[i].Err = err.Error()
+			default:
+				rows[i].Balances = b
+			}
+		}(i, rg)
+	}
+	wg.Wait()
+	s.render(w, r, "registrars", page{Title: "Registrars", Nav: "registrars", Data: map[string]any{"Rows": rows, "Checked": time.Now()}})
 }
 
 func (s *Server) domainCatchReset(w http.ResponseWriter, r *http.Request) {

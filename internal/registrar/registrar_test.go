@@ -36,7 +36,8 @@ func TestDynadotSignatureAndOutcomes(t *testing.T) {
 		t.Fatalf("409 not available => %s", res.Outcome)
 	}
 	m := hmac.New(sha256.New, []byte("SECRET"))
-	m.Write([]byte("KEY\n" + gotPath + "\n" + gotReq + "\n" + gotBody))
+	_ = gotReq
+	m.Write([]byte("KEY\n" + gotPath + "\n\n" + gotBody)) // empty request-id line, as the live API requires
 	if gotSig != base64.StdEncoding.EncodeToString(m.Sum(nil)) {
 		t.Fatal("X-Signature does not match the documented scheme")
 	}
@@ -325,7 +326,7 @@ func TestRegeryAPI(t *testing.T) {
 		t.Error("error result must be an error")
 	}
 
-	if b, err := r.Balance(ctx); err != nil || b != 100 {
+	if b, err := r.Balances(ctx); err != nil || len(b) != 1 || b[0].Amount != "100.00" {
 		t.Errorf("balance %v %v", b, err)
 	}
 

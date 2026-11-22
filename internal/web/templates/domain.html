@@ -123,6 +123,19 @@
   </div>
 </div>
 
+<h2>Register now (manual)</h2>
+<div class="box danger-box">
+  <p>Sends real orders <b>immediately</b> to every selected registrar ({{if $x.CatchRegistrars}}{{join $x.CatchRegistrars ", "}}{{else}}<span class="st-error">none selected</span>{{end}}) <b>without checking availability</b>, at the same time, retrying for {{$x.CatchDuration}} min (the "keep placing orders for" setting) until one succeeds, an order is pending, every registrar fails permanently, or you stop it. Each successful registrar charges its account balance: selecting several can buy the domain more than once if registries accept parallel orders.</p>
+  {{if eq $x.CatchState "active"}}<p class="muted">A session is already running: stop it first.</p>
+  {{else}}
+  <form method="post" action="/domain/{{$x.ID}}/register-now" class="actions" data-confirm="Place REAL orders for {{$x.UName}} now with {{join $x.CatchRegistrars ", "}}?">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <label>type <b>{{$x.UName}}</b> to confirm <input type="text" name="confirm" autocomplete="off" required size="28"></label>
+    <button class="danger">register now</button>
+  </form>
+  {{end}}
+</div>
+
 <h2>Orders</h2>
 {{template "ordertable" $d.Orders}}
 

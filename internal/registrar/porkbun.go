@@ -230,3 +230,35 @@ func (p *Porkbun) Register(ctx context.Context, domain string) Result {
 	out.Price = price
 	return out
 }
+
+// Balances reads GET /account/balance (balance in cents).
+func (p *Porkbun) Balances(ctx context.Context) ([]Balance, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", p.base+"/account/balance", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-API-Key", p.c.APIKey)
+	req.Header.Set("X-Secret-API-Key", p.c.SecretKey)
+	req.Header.Set("Accept", "application/json")
+	resp, err := p.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var r struct {
+		Status  string      `json:"status"`
+		Message string      `json:"message"`
+		Balance json.Number `json:"balance"`
+		Display string      `json:"display"`
+	}
+	dec := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
+	dec.UseNumber()
+	if err := dec.Decode(&r); err != nil {
+		return nil, fmt.Errorf("porkbun balance HTTP %d", resp.StatusCode)
+	}
+	if r.Status != "SUCCESS" {
+		return nil, fmt.Errorf("porkbun: %s", r.Message)
+	}
+	c, _ := r.Balance.Int64()
+	return []Balance{{Amount: fmt.Sprintf("%.2f", float64(c)/100), Currency: "USD", Note: r.Display}}, nil
+}

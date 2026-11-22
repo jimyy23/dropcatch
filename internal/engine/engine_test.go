@@ -193,6 +193,40 @@ func TestCatchEndsWhenAllRegistrarsFatal(t *testing.T) {
 	}
 }
 
+func TestManualRegisterIgnoresAvailability(t *testing.T) {
+	a := &reg{key: "a", winAfter: 2}
+	b := &reg{key: "b"}
+	e, st, s, id := setup(t, a, b)
+	st.SetToggle(id, "catch", false) // drop-catch off: manual still works
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+	s.set(store.StatusRegistered) // monitor says taken: manual orders anyway
+	if err := e.RegisterNow(id, "tester"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.RegisterNow(id, "tester"); err == nil {
+		t.Error("a second manual register while one runs must be refused")
+	}
+	d := waitState(t, st, id, store.CatchWon)
+	if d.CatchWonBy != "a" || !strings.HasPrefix(d.CatchResult, "manual register:") || b.calls.Load() == 0 {
+		t.Fatalf("won by %q result %q b=%d", d.CatchWonBy, d.CatchResult, b.calls.Load())
+	}
+}
+
+func TestManualRegisterNeedsRegistrar(t *testing.T) {
+	e, st, _, id := setup(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	time.Sleep(100 * time.Millisecond)
+	st.UpdateDomainSettings(id, store.DomainSettings{MonitorEnabled: true, MonitorInterval: 3600, CatchInterval: 1, CatchDuration: 1})
+	if err := e.RegisterNow(id, "tester"); err == nil {
+		t.Fatal("manual register without registrars must fail")
+	}
+}
+
 func TestNotArmedPlacesNoOrders(t *testing.T) {
 	a := &reg{key: "a", winAfter: 1}
 	e, st, s, id := setup(t, a)

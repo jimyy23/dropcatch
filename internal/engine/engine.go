@@ -301,6 +301,44 @@ func (e *Engine) sleep(ctx context.Context, w *worker, d time.Duration) bool {
 	}
 }
 
+// RegisterNow starts an admin-initiated register session for a domain: every
+// selected, configured registrar receives orders immediately, without an
+// availability check, for the domain's order duration. It runs in its own
+// goroutine; the domain's worker keeps monitoring.
+func (e *Engine) RegisterNow(id int64, by string) error {
+	d, err := e.st.GetDomain(id)
+	if err != nil {
+		return err
+	}
+	if d.CatchState == store.CatchActive {
+		return fmt.Errorf("a drop-catch session is already running for %s", d.UName)
+	}
+	if len(d.CatchRegistrars) == 0 {
+		return fmt.Errorf("select at least one registrar for %s first", d.UName)
+	}
+	name, err := domainutil.Parse(d.Name)
+	if err != nil {
+		return err
+	}
+	e.mu.Lock()
+	ctx := e.ctx
+	e.mu.Unlock()
+	if ctx == nil {
+		return fmt.Errorf("engine not running")
+	}
+	if _, busy := manualSessions.LoadOrStore(id, struct{}{}); busy {
+		return fmt.Errorf("a manual register is already starting for %s", d.UName)
+	}
+	w := &worker{id: id, wake: make(chan struct{}, 1)}
+	go func() {
+		defer manualSessions.Delete(id)
+		e.runSession(ctx, w, d, name, monitor.Observation{Source: "manual", Status: "manual"}, true, by)
+	}()
+	return nil
+}
+
+var manualSessions sync.Map
+
 // CheckNow runs a manual check from the UI (via the worker).
 func (e *Engine) CheckNow(id int64) {
 	e.st.W.Exec(`UPDATE domains SET checked_at=0 WHERE id=?`, id)

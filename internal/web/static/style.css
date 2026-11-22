@@ -125,3 +125,4 @@ pre.raw { background: #111417; color: #d7dade; padding: .5rem; overflow: auto; m
 .prose li { margin: .2rem 0; }
 details summary { cursor: pointer; }
 .busy { opacity: .6; pointer-events: none; }
+.danger-box { border-color: #f1a7b2; background: #fffafa; }

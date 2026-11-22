@@ -25,7 +25,8 @@ import (
 //	search:   GET  /restful/v2/domains/{domain}/search   (Bearer key)
 //	register: POST /restful/v2/domains/{domain}/register (Bearer key + X-Signature)
 //
-// X-Signature = base64(HMAC-SHA256(secret, apiKey\nfullPathAndQuery\nxRequestId\nbody)).
+// X-Signature = base64(HMAC-SHA256(secret, apiKey\nfullPathAndQuery\n\nbody)): the
+// request-id line must be empty in practice (see do()).
 // Orders are paid from the account balance (402 "Insufficient funds.").
 // Rate limits depend on the account price level (Regular: 1 thread, 1 req/s).
 type Dynadot struct {
@@ -85,7 +86,11 @@ func (d *Dynadot) do(ctx context.Context, method, pathQuery string, body []byte,
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Request-ID", reqID)
 	if sign {
-		msg := d.c.APIKey + "\n" + pathQuery + "\n" + reqID + "\n" + string(body)
+		// The docs put X-Request-ID into the string to sign, but the live API
+		// (verified 2026-11-22 on GET /restful/v2/accounts/info) only accepts
+		// signatures computed with an EMPTY request-id line, whether or not the
+		// X-Request-ID header is sent.
+		msg := d.c.APIKey + "\n" + pathQuery + "\n" + "" + "\n" + string(body)
 		m := hmac.New(sha256.New, []byte(d.c.APISecret))
 		m.Write([]byte(msg))
 		req.Header.Set("X-Signature", base64.StdEncoding.EncodeToString(m.Sum(nil)))
@@ -236,4 +241,36 @@ func (d *Dynadot) Register(ctx context.Context, domain string) Result {
 		return Result{Outcome: Retryable, Message: msg}
 	}
 	return Result{Outcome: classifyHTTP(code), Message: fmt.Sprintf("HTTP %d %s", env.Code, msg)}
+}
+
+// Balances reads GET /restful/v2/accounts/info (signed): account_info.balance_list.
+func (d *Dynadot) Balances(ctx context.Context) ([]Balance, error) {
+	code, _, env, err := d.do(ctx, "GET", "/restful/v2/accounts/info", nil, true)
+	if err != nil {
+		return nil, err
+	}
+	if env.Code != 200 {
+		return nil, fmt.Errorf("dynadot HTTP %d: %s", code, env.Error.Description)
+	}
+	var r struct {
+		AccountInfo struct {
+			PriceLevel     string `json:"price_level"`
+			AccountBalance string `json:"account_balance"`
+			BalanceList    []struct {
+				Currency string `json:"currency"`
+				Amount   string `json:"amount"`
+			} `json:"balance_list"`
+		} `json:"account_info"`
+	}
+	if err := json.Unmarshal(env.Data, &r); err != nil {
+		return nil, fmt.Errorf("dynadot: bad account info")
+	}
+	var out []Balance
+	for _, b := range r.AccountInfo.BalanceList {
+		out = append(out, Balance{Amount: b.Amount, Currency: b.Currency, Note: r.AccountInfo.PriceLevel})
+	}
+	if len(out) == 0 && r.AccountInfo.AccountBalance != "" {
+		out = append(out, Balance{Amount: r.AccountInfo.AccountBalance, Note: r.AccountInfo.PriceLevel})
+	}
+	return out, nil
 }

@@ -201,11 +201,17 @@ func (r *Regery) EnsureContact(ctx context.Context) (string, error) {
 	return out.ID, nil
 }
 
-// Balance returns the account balance (GET /v1/account/balance).
-func (r *Regery) Balance(ctx context.Context) (float64, error) {
-	var b float64
-	_, err := r.do(ctx, "GET", "/v1/account/balance", nil, &b)
-	return b, err
+// Balances reads GET /v1/account/balance (a bare number, e.g. 100.00).
+func (r *Regery) Balances(ctx context.Context) ([]Balance, error) {
+	var b json.Number
+	if _, err := r.do(ctx, "GET", "/v1/account/balance", nil, &b); err != nil {
+		return nil, err
+	}
+	f, err := b.Float64()
+	if err != nil {
+		return nil, fmt.Errorf("regery: bad balance %q", b)
+	}
+	return []Balance{{Amount: fmt.Sprintf("%.2f", f), Currency: "USD", Note: "currency not stated by the API"}}, nil
 }
 
 func (r *Regery) Register(ctx context.Context, domain string) Result {
