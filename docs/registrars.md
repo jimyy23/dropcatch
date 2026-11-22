@@ -63,8 +63,25 @@ real `SUCCESS` cannot be produced there; the success shapes from the PDF (`statu
 | Internet.bs | `/Account/Balance/Get` → `balance[]` per currency | yes |
 | Netim | `GET /account/` → `BALANCE_AMOUNT` (StructQueryResellerAccount) | no keys |
 | Regery | `GET /v1/account/balance` → number | no keys |
-| NameSilo | `getAccountBalance` → `balance` | no keys |
+| NameSilo | `getAccountBalance` → `balance` | yes |
 | Cloudflare | none: registrations are charged to the account's payment method | n/a |
 
 Dynadot note: the docs include `X-Request-ID` in the string to sign, but the live API only accepts
 signatures whose request-id line is empty (`key\npath\n\nbody`), verified 2026-11-22.
+
+## NameSilo: verified against production (read-only)
+
+`LIVE_NAMESILO=1 go test ./internal/registrar -run LiveNameSilo -v` calls only
+`getAccountBalance`, `contactList` and `checkRegisterAvailability` (orders are dry runs).
+The live `checkRegisterAvailability` reply differs from the documented example, and all shapes
+are handled and unit-tested:
+
+| Case | Live shape |
+|---|---|
+| one available | `"available": {"domain": {"domain":"x.org","price":10.79,"renew":14.99,"premium":0,"duration":10}}` |
+| several available | `"available": [{"domain":"a.com","price":19.99,...}, ...]` |
+| one unavailable | `"unavailable": {"domain":"example.com"}` |
+| several unavailable | `"unavailable": ["example.com","example.net"]` |
+| unsupported TLD | `"invalid": {"domain":"foobar123.lu"}` or `["foobar123.lu", ...]` |
+
+NameSilo does not sell `.lu` or `.tw` (reported as `invalid`).

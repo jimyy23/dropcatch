@@ -411,6 +411,29 @@ func TestNameSilo(t *testing.T) {
 	if a, err := n.Check(ctx, "b.com"); err != nil || a.Available {
 		t.Errorf("unavailable array: %+v %v", a, err)
 	}
+	// live production responses (2026-11-22)
+	for _, c := range []struct {
+		reply, domain string
+		avail         bool
+		err           error
+	}{
+		{`{"request":{"operation":"checkRegisterAvailability"},"reply":{"code":300,"detail":"success","available":{"domain":{"domain":"dropcatch-ns-c-81723.org","price":10.79,"renew":14.99,"premium":0,"duration":10}}}}`, "dropcatch-ns-c-81723.org", true, nil},
+		{`{"reply":{"code":300,"detail":"success","unavailable":{"domain":"example.com"}}}`, "example.com", false, nil},
+		{`{"reply":{"code":300,"detail":"success","available":[{"domain":"a-81723.com","price":19.99,"renew":19.99,"premium":0,"duration":10}],"unavailable":["example.com","example.net","google.com"]}}`, "example.net", false, nil},
+		{`{"reply":{"code":300,"detail":"success","available":[{"domain":"a-81723.com","price":19.99,"renew":19.99,"premium":0,"duration":10}],"unavailable":["example.com","example.net","google.com"]}}`, "a-81723.com", true, nil},
+		{`{"reply":{"code":300,"detail":"success","invalid":{"domain":"foobar123.lu"}}}`, "foobar123.lu", false, ErrUnsupported},
+		{`{"reply":{"code":300,"detail":"success","invalid":["foobar123.lu","foobar123.tw","bankbazaar.tw"]}}`, "foobar123.tw", false, ErrUnsupported},
+	} {
+		reply = c.reply
+		a, err := n.Check(ctx, c.domain)
+		if err != c.err || (err == nil && a.Available != c.avail) {
+			t.Errorf("live shape %s: %+v %v", c.domain, a, err)
+		}
+	}
+	reply = `{"reply":{"code":300,"detail":"success","available":{"domain":{"domain":"x.org","price":10.79,"premium":0}}}}`
+	if a, _ := n.Check(ctx, "x.org"); a.Price != "10.79 USD" {
+		t.Errorf("wrapped price: %q", a.Price)
+	}
 
 	reply = `{"request":{"operation":"registerDomain","ip":"55.555.55.55"},"reply":{"code":300,"detail":"success","message":"Your domain registration was successfully processed.","domain":"namesilo.com","order_amount":7.77}}`
 	res := n.Register(ctx, "namesilo.com")

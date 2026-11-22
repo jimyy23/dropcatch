@@ -57,6 +57,7 @@ type nsReply struct {
 	Available   json.RawMessage `json:"available"`
 	Unavailable json.RawMessage `json:"unavailable"`
 	Invalid     json.RawMessage `json:"invalid"`
+	Contact     json.RawMessage `json:"contact"`
 }
 
 func (r *nsReply) code() int {
@@ -94,8 +95,13 @@ func (n *NameSilo) call(ctx context.Context, op string, p url.Values) (*nsReply,
 	return &env.Reply, nil
 }
 
-// nsDomains decodes a domain list that may be an object or an array, and
-// whose entries are objects ({"domain":..}) or bare strings.
+// nsDomains decodes the availability lists. Observed live shapes
+// (2026-11-22) besides the documented array of objects:
+//
+//	"available":   {"domain": {"domain":"x.org","price":10.79,...}}   (single entry, wrapped)
+//	"unavailable": {"domain":"example.com"}                           (single entry)
+//	"unavailable": ["example.com","example.net"]                      (several, bare strings)
+//	"invalid":     ["foobar123.lu","foobar123.tw"]
 func nsDomains(raw json.RawMessage) []nsAvail {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || string(raw) == "null" {
@@ -109,18 +115,37 @@ func nsDomains(raw json.RawMessage) []nsAvail {
 	}
 	var out []nsAvail
 	for _, x := range arr {
-		var a nsAvail
-		var s string
-		if json.Unmarshal(x, &s) == nil {
-			a.Domain = s
-		} else {
-			d := json.NewDecoder(bytes.NewReader(x))
-			d.UseNumber()
-			d.Decode(&a)
+		if a, ok := nsEntry(x); ok {
+			out = append(out, a)
 		}
-		out = append(out, a)
 	}
 	return out
+}
+
+// nsEntry decodes one entry: a bare string, {"domain":"x", price...} or
+// {"domain":{...}} (the wrapper seen for single results).
+func nsEntry(x json.RawMessage) (nsAvail, bool) {
+	var s string
+	if json.Unmarshal(x, &s) == nil {
+		return nsAvail{Domain: s}, s != ""
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(x, &obj) != nil {
+		return nsAvail{}, false
+	}
+	if inner, ok := obj["domain"]; ok {
+		inner = bytes.TrimSpace(inner)
+		if len(inner) > 0 && inner[0] == '{' {
+			return nsEntry(inner)
+		}
+	}
+	var a nsAvail
+	d := json.NewDecoder(bytes.NewReader(x))
+	d.UseNumber()
+	if d.Decode(&a) != nil || a.Domain == "" {
+		return nsAvail{}, false
+	}
+	return a, true
 }
 
 type nsAvail struct {
@@ -152,7 +177,11 @@ func (n *NameSilo) Check(ctx context.Context, domain string) (Availability, erro
 	for _, a := range nsDomains(r.Available) {
 		if strings.EqualFold(a.Domain, domain) {
 			p := a.Premium.String()
-			return Availability{Available: true, Premium: p == "1", Price: a.Price.String() + " USD"}, nil
+			price := ""
+			if f, err := a.Price.Float64(); err == nil && f > 0 {
+				price = fmt.Sprintf("%.2f USD", f)
+			}
+			return Availability{Available: true, Premium: p == "1", Price: price}, nil
 		}
 	}
 	for _, a := range nsDomains(r.Unavailable) {
@@ -206,8 +235,8 @@ func (n *NameSilo) Register(ctx context.Context, domain string) Result {
 
 func nsRegisterResult(r *nsReply) Result {
 	price := ""
-	if r.OrderAmount != "" {
-		price = r.OrderAmount.String() + " USD"
+	if f, err := r.OrderAmount.Float64(); err == nil && f > 0 {
+		price = fmt.Sprintf("%.2f USD", f)
 	}
 	msg := strings.TrimSpace(r.Detail + " " + r.Message)
 	switch c := r.code(); c {
@@ -251,4 +280,35 @@ func (n *NameSilo) Balances(ctx context.Context) ([]Balance, error) {
 	}
 	f, _ := r.Balance.Float64()
 	return []Balance{{Amount: fmt.Sprintf("%.2f", f), Currency: "USD"}}, nil
+}
+
+// ContactExists checks a contact profile id via contactList (read-only).
+func (n *NameSilo) ContactExists(ctx context.Context, id string) (bool, error) {
+	r, err := n.call(ctx, "contactList", url.Values{"contact_id": {id}})
+	if err != nil {
+		return false, err
+	}
+	if r.code() != 300 {
+		return false, nsError(r)
+	}
+	raw := bytes.TrimSpace(r.Contact)
+	if len(raw) == 0 || string(raw) == "null" {
+		return false, nil
+	}
+	var list []map[string]any
+	if raw[0] == '{' {
+		var one map[string]any
+		if json.Unmarshal(raw, &one) != nil {
+			return false, nil
+		}
+		list = []map[string]any{one}
+	} else if json.Unmarshal(raw, &list) != nil {
+		return false, nil
+	}
+	for _, c := range list {
+		if fmt.Sprint(c["contact_id"]) == id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
