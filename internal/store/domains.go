@@ -501,3 +501,8 @@ func (s *Store) SetFireAt(id int64, at time.Time) {
 func (s *Store) MarkFired(id int64, at time.Time) {
 	s.W.Exec(`UPDATE domains SET fire_done_at=? WHERE id=?`, Unix(at), id)
 }
+
+// SetFireTiming sets the scheduled-fire lead (seconds) and duration (minutes).
+func (s *Store) SetFireTiming(id int64, lead, duration int) {
+	s.W.Exec(`UPDATE domains SET fire_lead=?, fire_duration=? WHERE id=?`, lead, duration, id)
+}

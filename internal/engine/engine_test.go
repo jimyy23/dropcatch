@@ -260,17 +260,58 @@ func TestKeepSpecific(t *testing.T) {
 func TestExpectedReleaseTW(t *testing.T) {
 	// sina.com.tw: "Record expires on 2026-10-27 00:00:00 (UTC+8)" = RDAP 2026-10-26T16:00:00Z
 	exp := time.Date(2026, 10, 26, 16, 0, 0, 0, time.UTC)
-	at, err := ExpectedRelease("com.tw", exp)
+	at, err := ExpectedRelease(ReleaseInput{Suffix: "com.tw", Expires: exp})
 	if err != nil || !at.Equal(time.Date(2026, 11, 29, 6, 0, 0, 0, time.UTC)) {
 		t.Fatalf("sina.com.tw release = %s %v, want 2026-11-29 06:00:00 UTC", at, err)
 	}
 	// the Taiwan date counts, not the UTC date: 2026-10-27 23:30 UTC is 10-28 in Taiwan
-	at, _ = ExpectedRelease("tw", time.Date(2026, 10, 27, 23, 30, 0, 0, time.UTC))
+	at, _ = ExpectedRelease(ReleaseInput{Suffix: "tw", Expires: time.Date(2026, 10, 27, 23, 30, 0, 0, time.UTC)})
 	if !at.Equal(time.Date(2026, 11, 30, 6, 0, 0, 0, time.UTC)) {
 		t.Fatalf("Taiwan-date rule: %s", at)
 	}
-	if _, err := ExpectedRelease("com", exp); err == nil {
+	if _, err := ExpectedRelease(ReleaseInput{Suffix: "com", Expires: exp}); err == nil {
 		t.Fatal(".com has no rule")
+	}
+	if r, _ := RuleFor("com.tw"); r.Name != ".tw (TWNIC)" {
+		t.Fatalf("rule name %q", r.Name)
+	}
+}
+
+func TestExpectedReleaseCA(t *testing.T) {
+	utc := func(d, h, m int) time.Time { return time.Date(2026, 11, d, h, m, 0, 0, time.UTC) }
+	// Nov 2026: Mon 16, Wed 18, Sun 22, Mon 23, Wed 25, Dec 2 (Wed)
+	cases := []struct {
+		deleted, want time.Time
+	}{
+		{utc(15, 12, 0), utc(18, 19, 0)},                               // Sunday -> that Wednesday
+		{utc(16, 6, 59), utc(18, 19, 0)},                               // just before the Monday cutoff
+		{utc(16, 7, 0), utc(25, 19, 0)},                                // Monday 07:00 -> following Wednesday
+		{utc(17, 12, 0), utc(25, 19, 0)},                               // Tuesday
+		{utc(18, 18, 59), utc(25, 19, 0)},                              // Wednesday before the session
+		{utc(18, 19, 0), utc(25, 19, 0)},                               // at the session start
+		{utc(18, 20, 0), utc(25, 19, 0)},                               // Wednesday evening: 6.9 days
+		{utc(23, 7, 0), time.Date(2026, 12, 2, 19, 0, 0, 0, time.UTC)}, // Monday 07:00 (week of Nov 25) -> Dec 2
+	}
+	for _, c := range cases {
+		at, err := ExpectedRelease(ReleaseInput{Suffix: "ca", PendingDelete: true, PendingDeleteSince: c.deleted})
+		if err != nil || !at.Equal(c.want) {
+			t.Errorf("deleted %s: got %s %v, want %s", c.deleted, at, err, c.want)
+		}
+		if d := at.Sub(c.deleted); d < 60*time.Hour || d > 228*time.Hour {
+			t.Errorf("deleted %s: %s on the list, outside 2.5-9.5 days", c.deleted, d)
+		}
+	}
+	if _, err := ExpectedRelease(ReleaseInput{Suffix: "ca", Expires: utc(1, 0, 0)}); err == nil {
+		t.Fatal(".ca needs pending delete")
+	}
+	// ReleaseInputFor: registry "updated" marks the deletion when plausible
+	d := &store.Domain{Suffix: "ca", Status: store.StatusPendingDelete, StatusSince: utc(17, 12, 0), Updated: utc(15, 12, 0)}
+	if at, _ := ExpectedRelease(ReleaseInputFor(d)); !at.Equal(utc(18, 19, 0)) {
+		t.Fatalf("from updated date: %s", at)
+	}
+	d.Updated = utc(1, 0, 0) // too old to be the deletion: use first seen
+	if at, _ := ExpectedRelease(ReleaseInputFor(d)); !at.Equal(utc(25, 19, 0)) {
+		t.Fatalf("from first seen: %s", at)
 	}
 }
 

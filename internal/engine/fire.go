@@ -73,23 +73,24 @@ func (e *Engine) fire(ctx context.Context, w *worker, d *store.Domain) {
 	e.runSessionUntil(ctx, w, &sess, name, monitor.Observation{Source: "schedule", Status: "release time"}, "scheduled fire", end)
 }
 
-// RefreshFireAt recomputes an automatic fire time from the registry expiry
-// and the suffix release rule. It returns the new value (zero if unknown).
+// RefreshFireAt recomputes an automatic fire time from the suffix release
+// rule and the stored registry data. It returns the new value.
 func (e *Engine) RefreshFireAt(d *store.Domain) time.Time {
 	if !d.FireAuto {
 		return d.FireAt
 	}
-	if _, ok := RuleFor(d.Suffix); !ok || d.Expires.IsZero() {
+	rule, ok := RuleFor(d.Suffix)
+	if !ok {
 		return d.FireAt
 	}
-	at, err := ExpectedRelease(d.Suffix, d.Expires)
+	at, err := ExpectedRelease(ReleaseInputFor(d))
 	if err != nil {
 		return d.FireAt
 	}
 	if !at.Equal(d.FireAt) {
 		e.st.SetFireAt(d.ID, at)
-		e.st.AddEvent(d.ID, "release_time", "info", fmt.Sprintf("expected registry release %s UTC (rule for .%s, expiry %s)",
-			at.UTC().Format("2006-01-02 15:04:05"), d.Suffix, d.Expires.Format(time.RFC3339)))
+		e.st.AddEvent(d.ID, "release_time", "info", fmt.Sprintf("expected registry release %s UTC (%s rule)",
+			at.UTC().Format("2006-01-02 15:04:05"), rule.Name))
 	}
 	return at
 }

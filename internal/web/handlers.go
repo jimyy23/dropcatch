@@ -177,6 +177,9 @@ func (s *Server) domainsAdd(w http.ResponseWriter, r *http.Request) {
 			errs = append(errs, n.Unicode+": "+err.Error())
 			continue
 		}
+		if rule, ok := engine.RuleFor(n.Suffix); ok {
+			s.St.SetFireTiming(id, rule.DefaultLead, rule.DefaultDuration)
+		}
 		if firstID == 0 {
 			firstID = id
 		}
@@ -233,7 +236,8 @@ func (s *Server) domainsBulk(w http.ResponseWriter, r *http.Request) {
 type detailData struct {
 	D          *store.Domain
 	Rule       *engine.ReleaseRule
-	Release    time.Time // computed from the rule and the registry expiry
+	Release    time.Time // computed from the rule and the registry data
+	ReleaseErr string    // why Release is unknown
 	Armed      bool
 	ArmReason  string
 	Worker     engine.WorkerState
@@ -291,12 +295,16 @@ func (s *Server) renderDetail(w http.ResponseWriter, r *http.Request, d *store.D
 	n := s.Eng.Notifier()
 	var rule *engine.ReleaseRule
 	var release time.Time
+	releaseErr := ""
 	if rr, ok := engine.RuleFor(d.Suffix); ok {
 		rule = &rr
-		release, _ = engine.ExpectedRelease(d.Suffix, d.Expires)
+		var err error
+		if release, err = engine.ExpectedRelease(engine.ReleaseInputFor(d)); err != nil {
+			releaseErr = err.Error()
+		}
 	}
 	data := detailData{
-		D: d, Rule: rule, Release: release, Armed: d.Armed(now), ArmReason: d.ArmReason(now), Worker: s.Eng.States()[d.ID],
+		D: d, Rule: rule, Release: release, ReleaseErr: releaseErr, Armed: d.Armed(now), ArmReason: d.ArmReason(now), Worker: s.Eng.States()[d.ID],
 		Checks: s.St.ListChecks(d.ID, 60), Orders: s.St.ListOrders(d.ID, 100), Events: ev,
 		Registrars: opts, Book: book, Plan: s.Eng.Monitor().Plan(d.Suffix), Health: health, Probe: probe,
 		CallOK: n.CallConfigured(), TelegramOK: n.TelegramConfigured(),
@@ -346,17 +354,23 @@ func (s *Server) domainSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fireAuto := r.FormValue("fire_auto") == "1"
+	fireLead := formInt(r, "fire_lead", d.FireLead, 0, 600)
+	fireDuration := formInt(r, "fire_duration", d.FireDuration, 1, 1440)
 	if fireAuto {
 		fireAt = time.Time{}
-		if rel, err := engine.ExpectedRelease(d.Suffix, d.Expires); err == nil {
+		if rel, err := engine.ExpectedRelease(engine.ReleaseInputFor(d)); err == nil {
 			fireAt = rel
+		}
+		// switching the rule on applies its lead/duration defaults
+		if rule, ok := engine.RuleFor(d.Suffix); ok && !d.FireAuto {
+			fireLead, fireDuration = rule.DefaultLead, rule.DefaultDuration
 		}
 	}
 	x := store.DomainSettings{
 		FireAt:          fireAt,
 		FireAuto:        fireAuto,
-		FireLead:        formInt(r, "fire_lead", d.FireLead, 0, 600),
-		FireDuration:    formInt(r, "fire_duration", d.FireDuration, 1, 1440),
+		FireLead:        fireLead,
+		FireDuration:    fireDuration,
 		Note:            strings.TrimSpace(r.FormValue("note")),
 		MonitorEnabled:  r.FormValue("monitor_enabled") == "1",
 		MonitorInterval: formInt(r, "monitor_interval", d.MonitorInterval, 30, 7*86400),

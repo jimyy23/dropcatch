@@ -96,11 +96,12 @@ have a **fire time**: from *lead* seconds before it until *duration* minutes aft
 selected registrar without checking availability and without the monitor stopping them. It runs once per fire
 time, and only while drop-catch (or auto pending-delete) is on.
 
-The fire time is set by hand (UTC), or computed from a suffix **release rule** and the registry expiry date:
+The fire time is set by hand (UTC), or computed from a suffix **release rule** and the registry data. Switching a rule on applies its default lead and duration:
 
-| Suffix | Rule |
-|---|---|
-| `.tw`, `.com.tw`, `.net.tw`, `.org.tw`, `.idv.tw`, … | 33rd day after the expiry **date in Taiwan time (UTC+8)**, at 06:00:00 UTC. Example: expiry 2026-10-27 00:00 UTC+8 → release 2026-11-29 06:00:00 UTC |
+| Rule | Suffixes | When | Defaults |
+|---|---|---|---|
+| `.tw` (TWNIC) | `.tw` and all its second-level suffixes (`.com.tw`, `.net.tw`, `.org.tw`, `.idv.tw`, …) | 33rd day after the expiry **date in Taiwan time (UTC+8)**, at 06:00:00 UTC. Example: expiry 2026-10-27 00:00 UTC+8 → release 2026-11-29 06:00:00 UTC | lead 10 s, 5 min |
+| `.ca` (CIRA TBR) | `.ca` | To-Be-Released session, **every Wednesday 19:00:00 UTC** year-round. Counted from when the domain turned pending delete (registry "updated" date, else first seen by the monitor): before Monday 07:00 UTC → that Wednesday; Monday 07:00 to Wednesday 19:00 → the following Wednesday. Sessions last up to ~60 min; leftovers reach general availability ~30 min later. CIRA's published TBR list is authoritative: set the fire time by hand if it differs | lead 10 s, 90 min |
 
 When a domain becomes registered, the event log records the **registry creation time** and how long after it the
 monitor noticed.
