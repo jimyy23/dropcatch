@@ -130,7 +130,6 @@
   {{else}}
   <form method="post" action="/domain/{{$x.ID}}/register-now" class="actions" data-confirm="Place REAL orders for {{$x.UName}} now with {{join $x.CatchRegistrars ", "}}?">
     <input type="hidden" name="csrf" value="{{$csrf}}">
-    <label>type <b>{{$x.UName}}</b> to confirm <input type="text" name="confirm" autocomplete="off" required size="28"></label>
     <button class="danger">register now</button>
   </form>
   {{end}}

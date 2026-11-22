@@ -54,7 +54,7 @@ docker compose exec dropcatch dropcatch user reset-password alice 'new-long-pass
 - **One worker per domain:** a slow registry or a running drop-catch never delays another domain.
 - **Registrar support per suffix:** prices from [nazhumi](https://www.nazhumi.com/llms.txt) (every registrar for the suffix), with miqingju as the fallback, cached for a day. The domain page marks which of your registrars sell the suffix, and at what price.
 - **Registrars page:** credential status and live account balances for every configured registrar (read-only API calls).
-- **Register now:** on a domain's page, after typing the domain name to confirm, orders go out immediately to every selected registrar without an availability check, for the domain's order duration.
+- **Register now:** on a domain's page, after a browser confirmation, orders go out immediately to every selected registrar without an availability check, for the domain's order duration.
 - **Global settings page:** non-secret parameters only. Secrets live in `.env`, never in the database.
 
 ## How availability is decided

@@ -429,18 +429,14 @@ func (s *Server) domainCatchStop(w http.ResponseWriter, r *http.Request) {
 }
 
 // domainRegisterNow starts an immediate register session with every selected
-// registrar, skipping the availability check. The confirmation phrase guards
-// against accidental purchases.
+// registrar, skipping the availability check (the page asks for a browser
+// confirmation before submitting).
 func (s *Server) domainRegisterNow(w http.ResponseWriter, r *http.Request) {
 	id := pathID(r)
 	back := fmt.Sprintf("/domain/%d", id)
 	d, err := s.St.GetDomain(id)
 	if err != nil {
 		http.NotFound(w, r)
-		return
-	}
-	if strings.TrimSpace(strings.ToLower(r.FormValue("confirm"))) != strings.ToLower(d.Name) && strings.TrimSpace(strings.ToLower(r.FormValue("confirm"))) != strings.ToLower(d.UName) {
-		redirect(w, r, back, "", "type the domain name exactly to confirm the manual register")
 		return
 	}
 	if err := s.Eng.RegisterNow(id, user(r).Username); err != nil {
