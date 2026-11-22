@@ -10,6 +10,7 @@ Orders are paid from the account balance; no card payments are handled.
 | **Internet.bs** ([PDF](https://internetbs.net/internet-bs-api.pdf)) | `/Domain/Check` | `/Domain/Create` (`CloneContactsFromDomain` or `Registrant_/Admin_/Technical_/Billing_*`) | `STATUS=PENDING` | not documented | key bound to server IP |
 | **Netim** ([REST 1.0](https://support.netim.com/en/docs/api-rest-1-0/)) | `GET /domain/{d}/check/` | `POST /domain/{d}/` `{idOwner,idAdmin,idTech,idBilling,duration}` | `StructOperationResponse` `Pending` | 10 concurrent sessions per account (one shared session is used) | owner contact handle |
 | **Regery** ([external API](https://regery.com/partnership/api/introduction)) | `GET /v1/domains/{d}/availability` (`available`, `notAvailable`, `internal`, `restricted`, `notSupported`, `rateLimit`, `error`) | `POST /v1/domains/{d}` `{period, contacts:{registrant}, nameservers}`; registrant from `POST /v1/contacts` (idempotent) | `{"pending":true}`, result in the message queue | not documented (429 / `rateLimit` honoured) | API access granted on request; `Authorization: KEY:SECRET`; a test key enables test mode |
+| **NameSilo** ([API](https://www.namesilo.com/api-reference)) | `GET /api/checkRegisterAvailability?domains=` (`available[]` with price/premium, `unavailable`, `invalid`) | `GET /api/registerDomain?domain=&years=1` + `contact_id` or inline `fn,ln,ad,cy,st,zp,ct,em,ph`; no `payment_id` = account funds | no (301/302 = success with defaults) | not documented (code 400 = previous request still processing) | API key (optionally IP-bound); all calls GET |
 | **Cloudflare** ([Registrar API beta](https://developers.cloudflare.com/registrar/registrar-api/)) | `POST /accounts/{id}/registrar/domain-check` | `POST /accounts/{id}/registrar/registrations` `{domain_name}`; 201 done / 202 poll `links.self` | yes (polled ~30 s, then reported pending) | 1200 req / 5 min per token | token with Registrar write; default payment method + default registrant contact in dashboard; premium not allowed; 500 domains / account |
 
 ## Outcome mapping
@@ -52,3 +53,18 @@ The test server never reports a random name as AVAILABLE and refuses to create a
 real `SUCCESS` cannot be produced there; the success shapes from the PDF (`status`/`product_0_status`
 `SUCCESS`, `PENDING`) are unit-tested. Unverified contact e-mails are rejected by Internet.bs
 (code 100002), so use a verified `REGISTRANT_EMAIL` or `INTERNETBS_CLONE_CONTACTS_FROM`.
+
+## Account balances (Registrars page)
+
+| Registrar | Endpoint | Verified live |
+|---|---|---|
+| Dynadot | `GET /restful/v2/accounts/info` (signed) → `account_info.balance_list` | yes |
+| Porkbun | `GET /account/balance` → cents | yes |
+| Internet.bs | `/Account/Balance/Get` → `balance[]` per currency | yes |
+| Netim | `GET /account/` → `BALANCE_AMOUNT` (StructQueryResellerAccount) | no keys |
+| Regery | `GET /v1/account/balance` → number | no keys |
+| NameSilo | `getAccountBalance` → `balance` | no keys |
+| Cloudflare | none: registrations are charged to the account's payment method | n/a |
+
+Dynadot note: the docs include `X-Request-ID` in the string to sign, but the live API only accepts
+signatures whose request-id line is empty (`key\npath\n\nbody`), verified 2026-11-22.

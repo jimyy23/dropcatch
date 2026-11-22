@@ -53,6 +53,13 @@ type Regery struct {
 	Services          []string // optional contact services, e.g. proxy
 }
 
+type NameSilo struct {
+	APIKey      string
+	ContactID   string   // contact profile id; empty = REGISTRANT_* inline, else the account default profile
+	Private     bool     // WHOIS privacy
+	Nameservers []string // empty = NameSilo defaults
+}
+
 type Cloudflare struct {
 	APIToken, AccountID string
 }
@@ -91,6 +98,7 @@ type Env struct {
 	InternetBS InternetBS
 	Netim      Netim
 	Regery     Regery
+	NameSilo   NameSilo
 	Cloudflare Cloudflare
 	Twilio     Twilio
 	Telegram   Telegram
@@ -169,6 +177,10 @@ func Load() Env {
 		Regery: Regery{
 			APIKey: get("REGERY_API_KEY", ""), APISecret: get("REGERY_API_SECRET", ""),
 			ContactID: get("REGERY_CONTACT_ID", ""), Nameservers: list("REGERY_NAMESERVERS"), Services: list("REGERY_SERVICES"),
+		},
+		NameSilo: NameSilo{
+			APIKey: get("NAMESILO_API_KEY", ""), ContactID: get("NAMESILO_CONTACT_ID", ""),
+			Private: getBool("NAMESILO_PRIVATE", true), Nameservers: list("NAMESILO_NAMESERVERS"),
 		},
 		Cloudflare: Cloudflare{APIToken: get("CLOUDFLARE_API_TOKEN", ""), AccountID: get("CLOUDFLARE_ACCOUNT_ID", "")},
 		Twilio: Twilio{

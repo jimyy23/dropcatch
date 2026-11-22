@@ -46,6 +46,7 @@ func TestLiveBalances(t *testing.T) {
 		NewNetim(env.Netim, true),
 		NewCloudflare(env.Cloudflare, true),
 		NewRegery(env.Regery, env.Contact, true),
+		NewNameSilo(env.NameSilo, env.Contact, true),
 	}
 	for _, r := range regs {
 		if !r.Configured() {

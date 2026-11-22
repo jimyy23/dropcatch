@@ -66,6 +66,7 @@ func main() {
 		netim,
 		registrar.NewCloudflare(env.Cloudflare, env.OrdersDryRun),
 		registrar.NewRegery(env.Regery, env.Contact, env.OrdersDryRun),
+		registrar.NewNameSilo(env.NameSilo, env.Contact, env.OrdersDryRun),
 	)
 	for _, r := range regs.All() {
 		switch {

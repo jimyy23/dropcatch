@@ -53,12 +53,14 @@ docker compose exec dropcatch dropcatch user reset-password alice 'new-long-pass
 - **Clocks:** the header shows a live UTC clock next to the browser clock. Catch-window inputs show their browser-local equivalent as you type, so time-zone mistakes are visible.
 - **One worker per domain:** a slow registry or a running drop-catch never delays another domain.
 - **Registrar support per suffix:** prices from [nazhumi](https://www.nazhumi.com/llms.txt) (every registrar for the suffix), with miqingju as the fallback, cached for a day. The domain page marks which of your registrars sell the suffix, and at what price.
+- **Registrars page:** credential status and live account balances for every configured registrar (read-only API calls).
+- **Register now:** on a domain's page, after typing the domain name to confirm, orders go out immediately to every selected registrar without an availability check, for the domain's order duration.
 - **Global settings page:** non-secret parameters only. Secrets live in `.env`, never in the database.
 
 ## How availability is decided
 
 1. **WHOIS/RDAP** (sidecar [reg233/whois-domain-lookup](https://github.com/reg233/whois-domain-lookup), built from a pinned upstream commit) is the primary source. It also supplies status and dates. Empty or unparseable answers never count as "available".
-2. When WHOIS errors or is rate-limited for a suffix, the check falls back to **Cloudean** and **Regery**. These are keyless web checkers, which were probed for rate limits before use. After those come the **availability APIs** of configured registrars (Dynadot, Porkbun, Internet.bs, Netim, Cloudflare, Regery), which never place orders and are capped per hour.
+2. When WHOIS errors or is rate-limited for a suffix, the check falls back to **Cloudean** and **Regery**. These are keyless web checkers, which were probed for rate limits before use. After those come the **availability APIs** of configured registrars (Dynadot, Porkbun, Internet.bs, Netim, Cloudflare, Regery, NameSilo), which never place orders and are capped per hour.
 3. Health is tracked **per suffix and per source**. A rate-limited or repeatedly failing source is benched for that suffix, then retried once the cooldown ends. A source that doesn't sell the suffix is skipped for a week. WHOIS becomes the primary source again as soon as it answers. See the **Sources** page.
 
 Built-in protection for the fallbacks:
@@ -109,7 +111,7 @@ Layout:
 |---|---|
 | `internal/domainutil` | name parsing (IDN, public suffix) |
 | `internal/monitor` | WHOIS, Cloudean, Regery and registrar sources, per-suffix source selection, confirmation |
-| `internal/registrar` | the six registrar APIs (see [docs/registrars.md](docs/registrars.md)) |
+| `internal/registrar` | the seven registrar APIs (see [docs/registrars.md](docs/registrars.md)) |
 | `internal/engine` | per-domain workers, drop-catch sessions, notifications |
 | `internal/pricing` | suffix/registrar cache |
 | `internal/notify` | Twilio, Telegram |

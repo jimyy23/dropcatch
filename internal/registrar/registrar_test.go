@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -373,5 +374,83 @@ func TestRegeryAPI(t *testing.T) {
 	}
 	if NewRegery(config.Regery{APIKey: "k", APISecret: "s"}, config.Contact{}, false).Problem() == "" {
 		t.Error("missing contact must be reported")
+	}
+}
+
+// Responses copied from https://www.namesilo.com/api-reference (2026-11-22).
+func TestNameSilo(t *testing.T) {
+	reply := ""
+	var lastQ url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("NameSilo requires GET, got %s", r.Method)
+		}
+		lastQ = r.URL.Query()
+		if lastQ.Get("version") != "1" || lastQ.Get("type") != "json" || lastQ.Get("key") != "K" {
+			t.Errorf("standard params: %v", lastQ)
+		}
+		io.WriteString(w, reply)
+	}))
+	defer srv.Close()
+	ct := config.Contact{FirstName: "John", LastName: "Smith", Email: "t@test.com", Phone: "+1.4805555555", Street: "123 N. 1st Street", City: "Anywhere", State: "AZ", PostalCode: "55555", Country: "US"}
+	n := NewNameSilo(config.NameSilo{APIKey: "K", Private: true}, ct, false)
+	n.base = srv.URL
+	ctx := context.Background()
+
+	reply = `{"request":{"operation":"checkRegisterAvailability","ip":"55.555.55.55"},"reply":{"code":300,"detail":"success","available":[{"domain":"namesilo.com","price":9.99,"premium":0,"duration":1},{"domain":"namesilo.org","price":19.99,"premium":0,"duration":10}],"unavailable":{"domain":"namesilo.net"},"invalid":{"domain":"n#mesilo.com"}}}`
+	if a, err := n.Check(ctx, "namesilo.com"); err != nil || !a.Available || a.Premium || a.Price != "9.99 USD" {
+		t.Errorf("available: %+v %v", a, err)
+	}
+	if a, err := n.Check(ctx, "namesilo.net"); err != nil || a.Available {
+		t.Errorf("unavailable: %+v %v", a, err)
+	}
+	if _, err := n.Check(ctx, "n#mesilo.com"); err != ErrUnsupported {
+		t.Errorf("invalid => %v", err)
+	}
+	reply = `{"reply":{"code":"300","detail":"success","unavailable":[{"domain":"a.com"},{"domain":"b.com"}]}}`
+	if a, err := n.Check(ctx, "b.com"); err != nil || a.Available {
+		t.Errorf("unavailable array: %+v %v", a, err)
+	}
+
+	reply = `{"request":{"operation":"registerDomain","ip":"55.555.55.55"},"reply":{"code":300,"detail":"success","message":"Your domain registration was successfully processed.","domain":"namesilo.com","order_amount":7.77}}`
+	res := n.Register(ctx, "namesilo.com")
+	if res.Outcome != Success || res.Price != "7.77 USD" {
+		t.Fatalf("register: %+v", res)
+	}
+	if lastQ.Get("domain") != "namesilo.com" || lastQ.Get("years") != "1" || lastQ.Get("private") != "1" || lastQ.Get("fn") != "John" || lastQ.Get("ph") != "+1.4805555555" || lastQ.Get("st") != "AZ" || lastQ.Has("payment_id") {
+		t.Errorf("register params: %v", lastQ)
+	}
+	for _, c := range []struct {
+		reply string
+		want  Outcome
+	}{
+		{`{"reply":{"code":301,"detail":"success","domain":"x.com"}}`, Success},
+		{`{"reply":{"code":302,"detail":"success","domain":"x.com"}}`, Success},
+		{`{"reply":{"code":262,"detail":"This domain is already active within our system and therefore cannot be processed."}}`, Unavailable},
+		{`{"reply":{"code":119,"detail":"Insufficient account funds for requested transaction"}}`, Fatal},
+		{`{"reply":{"code":110,"detail":"Invalid API key"}}`, Fatal},
+		{`{"reply":{"code":113,"detail":"This API account cannot be accessed from your IP"}}`, Fatal},
+		{`{"reply":{"code":267,"detail":"Invalid domain name, or we do not support the provided extension/TLD."}}`, Fatal},
+		{`{"reply":{"code":115,"detail":"Central Registry Not Responding - try again later"}}`, Retryable},
+		{`{"reply":{"code":400,"detail":"Existing API request is still processing"}}`, RateLimited},
+		{`{"reply":{"code":261,"detail":"Domain processing error","message":"domain is not available"}}`, Unavailable},
+	} {
+		reply = c.reply
+		if res := n.Register(ctx, "x.com"); res.Outcome != c.want {
+			t.Errorf("%s => %s, want %s", c.reply, res.Outcome, c.want)
+		}
+	}
+
+	reply = `{"request":{"operation":"getAccountBalance","ip":"55.555.55.55"},"reply":{"code":300,"detail":"success","balance":355.75}}`
+	if b, err := n.Balances(ctx); err != nil || len(b) != 1 || b[0].Amount != "355.75" {
+		t.Errorf("balance: %v %v", b, err)
+	}
+
+	withID := NewNameSilo(config.NameSilo{APIKey: "K", ContactID: "4444444"}, ct, false)
+	withID.base = srv.URL
+	reply = `{"reply":{"code":300,"detail":"success","domain":"x.com"}}`
+	withID.Register(ctx, "x.com")
+	if lastQ.Get("contact_id") != "4444444" || lastQ.Has("fn") {
+		t.Errorf("contact_id mode: %v", lastQ)
 	}
 }
