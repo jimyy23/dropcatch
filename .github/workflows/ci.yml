@@ -19,7 +19,6 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      # no submodules: the whois image must build from the pinned upstream URL
       - uses: actions/checkout@v4
       - run: cp .env.example .env && sed -i 's/^ORDERS_DRY_RUN=false/ORDERS_DRY_RUN=true/' .env
       - run: docker compose build
