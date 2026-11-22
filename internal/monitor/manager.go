@@ -211,7 +211,7 @@ func (m *Manager) record(suffix string, o Observation) {
 		m.st.HealthErr(suffix, o.Source, msg, cool)
 	case ErrUnsupported:
 		m.st.HealthUnsupported(suffix, o.Source, cfg.UnsupportedFor)
-	case ErrTransient:
+	case ErrTransient, ErrUnparsed:
 		h := m.st.Health(suffix, o.Source)
 		cool := time.Duration(0)
 		if h.Streak+1 >= cfg.ErrorStreak {

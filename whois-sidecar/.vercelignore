@@ -1,0 +1,11 @@
+.github
+.idea
+.vscode
+test
+vendor
+.editorconfig
+.htaccess
+.vercelignore
+docker-compose.yml
+phpstan.neon
+README*.md

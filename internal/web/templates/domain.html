@@ -92,6 +92,18 @@
     </fieldset>
 
     <fieldset class="box">
+      <legend>Scheduled fire (release time)</legend>
+      <p class="small muted">Blind registration at a known registry release time: orders start at every selected registrar <i>lead</i> seconds before the fire time and continue for the given minutes, <b>without waiting for the monitor</b> (registry data seen through WHOIS/RDAP caches can lag by hours). Runs once per fire time while drop-catch (or auto pending-delete) is on.</p>
+      {{if $d.Rule}}<p class="small"><b>.{{$x.Suffix}} release rule:</b> {{$d.Rule.Note}}.<br>
+        Expected release: {{if isZero $d.Release}}<span class="muted">unknown (no expiry date yet)</span>{{else}}<b>{{datetime $d.Release}} UTC</b> <span class="muted">({{until $d.Release}})</span>{{end}}</p>{{end}}
+      <label class="chk"><input type="checkbox" name="fire_auto" value="1" {{if $x.FireAuto}}checked{{end}} {{if not $d.Rule}}disabled{{end}}> use the suffix release rule {{if not $d.Rule}}<span class="muted small">(no rule for .{{$x.Suffix}})</span>{{end}}</label>
+      <label>fire time <b>(UTC)</b> <input type="datetime-local" step="1" name="fire_at" value="{{local $x.FireAt}}" data-utc-input> <span class="muted small">ignored when the rule is used</span></label>
+      <label>start <input type="number" name="fire_lead" value="{{$x.FireLead}}" min="0" max="600"> seconds before</label>
+      <label>keep ordering for <input type="number" name="fire_duration" value="{{$x.FireDuration}}" min="1" max="1440"> minutes after</label>
+      <div class="small">{{if isZero $x.FireAt}}<span class="muted">no fire scheduled</span>{{else if and (not (isZero $x.FireDoneAt)) (eq ($x.FireDoneAt.Unix) ($x.FireAt.Unix))}}<span class="muted">fired for {{datetime $x.FireAt}} UTC</span>{{else}}<b class="st-armed">fire scheduled {{datetime $x.FireAt}} UTC</b> <span class="muted">({{until $x.FireAt}}){{if not (or $x.CatchEnabled $x.AutoCatchPD)}}, inactive until drop-catch is on{{end}}</span>{{end}}</div>
+    </fieldset>
+
+    <fieldset class="box">
       <legend>Notify me</legend>
       <label class="chk big {{if not $d.TelegramOK}}muted{{end}}"><input type="checkbox" name="notify_telegram" value="1" {{if $x.NotifyTelegram}}checked{{end}}> Telegram {{if not $d.TelegramOK}}<span class="small">(not configured)</span>{{end}}</label>
       <label class="chk big {{if not $d.CallOK}}muted{{end}}"><input type="checkbox" name="notify_call" value="1" {{if $x.NotifyCall}}checked{{end}}> phone call (Twilio) {{if not $d.CallOK}}<span class="small">(not configured)</span>{{end}}</label>

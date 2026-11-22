@@ -232,6 +232,8 @@ func (s *Server) domainsBulk(w http.ResponseWriter, r *http.Request) {
 
 type detailData struct {
 	D          *store.Domain
+	Rule       *engine.ReleaseRule
+	Release    time.Time // computed from the rule and the registry expiry
 	Armed      bool
 	ArmReason  string
 	Worker     engine.WorkerState
@@ -287,8 +289,14 @@ func (s *Server) renderDetail(w http.ResponseWriter, r *http.Request, d *store.D
 	}
 	ev, _ := s.St.ListEvents(d.ID, "", 50, 0)
 	n := s.Eng.Notifier()
+	var rule *engine.ReleaseRule
+	var release time.Time
+	if rr, ok := engine.RuleFor(d.Suffix); ok {
+		rule = &rr
+		release, _ = engine.ExpectedRelease(d.Suffix, d.Expires)
+	}
 	data := detailData{
-		D: d, Armed: d.Armed(now), ArmReason: d.ArmReason(now), Worker: s.Eng.States()[d.ID],
+		D: d, Rule: rule, Release: release, Armed: d.Armed(now), ArmReason: d.ArmReason(now), Worker: s.Eng.States()[d.ID],
 		Checks: s.St.ListChecks(d.ID, 60), Orders: s.St.ListOrders(d.ID, 100), Events: ev,
 		Registrars: opts, Book: book, Plan: s.Eng.Monitor().Plan(d.Suffix), Health: health, Probe: probe,
 		CallOK: n.CallConfigured(), TelegramOK: n.TelegramConfigured(),
@@ -302,7 +310,7 @@ func parseUTC(v string) (time.Time, error) {
 	if v == "" {
 		return time.Time{}, nil
 	}
-	for _, f := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05", "2006-01-02 15:04", "2006-01-02"} {
+	for _, f := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02 15:04:05", "2006-01-02 15:04", "2006-01-02"} {
 		if t, err := time.ParseInLocation(f, v, time.UTC); err == nil {
 			return t, nil
 		}
@@ -332,7 +340,23 @@ func (s *Server) domainSettings(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, back, "", "the catch window end must be after its start")
 		return
 	}
+	fireAt, err := parseUTC(r.FormValue("fire_at"))
+	if err != nil {
+		redirect(w, r, back, "", "fire time: "+err.Error())
+		return
+	}
+	fireAuto := r.FormValue("fire_auto") == "1"
+	if fireAuto {
+		fireAt = time.Time{}
+		if rel, err := engine.ExpectedRelease(d.Suffix, d.Expires); err == nil {
+			fireAt = rel
+		}
+	}
 	x := store.DomainSettings{
+		FireAt:          fireAt,
+		FireAuto:        fireAuto,
+		FireLead:        formInt(r, "fire_lead", d.FireLead, 0, 600),
+		FireDuration:    formInt(r, "fire_duration", d.FireDuration, 1, 1440),
 		Note:            strings.TrimSpace(r.FormValue("note")),
 		MonitorEnabled:  r.FormValue("monitor_enabled") == "1",
 		MonitorInterval: formInt(r, "monitor_interval", d.MonitorInterval, 30, 7*86400),

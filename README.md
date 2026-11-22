@@ -59,7 +59,7 @@ docker compose exec dropcatch dropcatch user reset-password alice 'new-long-pass
 
 ## How availability is decided
 
-1. **WHOIS/RDAP** (sidecar [reg233/whois-domain-lookup](https://github.com/reg233/whois-domain-lookup), built from a pinned upstream commit) is the primary source. It also supplies status and dates. Empty or unparseable answers never count as "available".
+1. **WHOIS/RDAP** (sidecar in `whois-sidecar/`, based on [reg233/whois-domain-lookup](https://github.com/reg233/whois-domain-lookup)) is the primary source. It also supplies status and dates. WHOIS and RDAP are queried **separately** (never the upstream merged mode, where a cached RDAP answer overrode live WHOIS): port-43/web WHOIS first, RDAP when WHOIS fails; for `.tw`, RDAP first with registry-cache busting. Empty, unparseable or failed answers never count as "available".
 2. When the internal WHOIS sidecar errors or is rate-limited for a suffix, the check tries the **external WHOIS sidecars** listed in `EXTERNAL_WHOIS_API_ENDPOINTS` (the same PHP program deployed elsewhere, so other IPs and registry rate-limit budgets), in order. They also supply registration data. Only after those does it fall back to **Cloudean** and **Regery**. These are keyless web checkers, which were probed for rate limits before use. After those come the **availability APIs** of configured registrars (Dynadot, Porkbun, Internet.bs, Netim, Cloudflare, Regery, NameSilo, Spaceship), which never place orders and are capped per hour.
 3. Health is tracked **per suffix and per source**. A rate-limited or repeatedly failing source is benched for that suffix, then retried once the cooldown ends. A source that doesn't sell the suffix is skipped for a week. WHOIS becomes the primary source again as soon as it answers. See the **Sources** page.
 
@@ -87,6 +87,23 @@ On the **first available signal**, orders go to **all selected registrars concur
 - you stop it
 
 Errors that retrying can't fix (keys, funds, premium, unsupported suffix) drop only that registrar. Registrars receive only order calls during a session. Availability comes from the monitor, so no paid or rate-limited order calls are wasted.
+
+## Scheduled fire (registry release time)
+
+Some registries release pending-delete domains at a fixed, predictable time. For those, waiting for a monitor
+signal is too slow: on `.tw` the fastest registrars create names 11 to 135 seconds after release. A domain can
+have a **fire time**: from *lead* seconds before it until *duration* minutes after it, orders go to every
+selected registrar without checking availability and without the monitor stopping them. It runs once per fire
+time, and only while drop-catch (or auto pending-delete) is on.
+
+The fire time is set by hand (UTC), or computed from a suffix **release rule** and the registry expiry date:
+
+| Suffix | Rule |
+|---|---|
+| `.tw`, `.com.tw`, `.net.tw`, `.org.tw`, `.idv.tw`, … | 33rd day after the expiry **date in Taiwan time (UTC+8)**, at 06:00:00 UTC. Example: expiry 2026-10-27 00:00 UTC+8 → release 2026-11-29 06:00:00 UTC |
+
+When a domain becomes registered, the event log records the **registry creation time** and how long after it the
+monitor noticed.
 
 ## Notifications
 

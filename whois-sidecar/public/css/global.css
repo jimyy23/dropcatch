@@ -1,0 +1,434 @@
+html {
+  color-scheme: light;
+  --border-back-to-top: #86b8f0;
+  --border-card: #007fff26;
+  --border-input: #007fff33;
+  --border-table: #cce5ff;
+  --brand-primary: #007fff;
+  --elevation-back-to-top: 0 10px 24px #b5cde8;
+  --elevation-card: 0 12px 30px #1d3b6b1a;
+  --feedback-error-bg: #ff5c7a1f;
+  --feedback-error-border: #ff5c7a45;
+  --feedback-error-fg: #b4234d;
+  --feedback-info-bg: #007fff1c;
+  --feedback-info-fg: #005fcc;
+  --feedback-neutral-bg: #5f7fa31f;
+  --feedback-neutral-border: #5f7fa345;
+  --feedback-neutral-fg: #4f6c8d;
+  --feedback-success-bg: #00b8941f;
+  --feedback-success-border: #00b89445;
+  --feedback-success-fg: #007a63;
+  --feedback-success-solid: #00a985;
+  --feedback-warning-bg: #f7a60024;
+  --feedback-warning-border: #f7a60045;
+  --feedback-warning-fg: #8a5a00;
+  --focus-ring: #007fffb8;
+  --scrollbar-thumb: #173a66a6;
+  --scrollbar-thumb-active: #173a66ff;
+  --scrollbar-thumb-hover: #173a66d9;
+  --surface-back-to-top: #f3f8ff;
+  --surface-back-to-top-active: #c5defd;
+  --surface-back-to-top-hover: #dcecff;
+  --surface-card: #ffffff;
+  --surface-chip: #007fff12;
+  --surface-chip-hover: #007fff2b;
+  --surface-input: #f9fbff;
+  --surface-link-hover: #007fff14;
+  --surface-page: #eef6ff;
+  --surface-primary-button: linear-gradient(
+    135deg,
+    var(--brand-primary),
+    #4db2ff
+  );
+  --surface-primary-button-active: linear-gradient(135deg, #0079f2, #49a9f2);
+  --surface-primary-button-disabled: linear-gradient(135deg, #60afff, #90cfff);
+  --surface-primary-button-hover: linear-gradient(135deg, #0086ff, #50bbff);
+  --surface-raw-data-button: #cfe6ff;
+  --surface-raw-data-button-active: #a9cdff;
+  --surface-raw-data-button-hover: #bddbff;
+  --surface-raw-data-head: var(--surface-page);
+  --surface-toggle-active: #007fff2e;
+  --surface-toggle-hover: #007fff1a;
+  --surface-toggle-indicator: #007fff26;
+  --surface-toggle-indicator-active: #007fff40;
+  --surface-tooltip: #173a66;
+  --text-link: #005fcc;
+  --text-link-hover: #00469e;
+  --text-link-underline: #007fff7a;
+  --text-link-underline-hover: #00469eb3;
+  --text-muted: #506f95;
+  --text-primary: #0c1f3f;
+  --text-primary-button: #f8fbff;
+  --text-secondary: #2b466f;
+  --text-toggle-active: #005fcc;
+  --text-tooltip: #f8fbff;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --border-back-to-top: #5f89c1;
+  --border-card: #7fb0ff42;
+  --border-input: #7fb0ff59;
+  --border-table: #344b78;
+  --brand-primary: #007fff;
+  --elevation-back-to-top: 0 10px 24px #020918;
+  --elevation-card: 0 14px 36px #00000052;
+  --feedback-error-bg: #ff6f912b;
+  --feedback-error-border: #ff6f9150;
+  --feedback-error-fg: #ff9bb2;
+  --feedback-info-bg: #66b2ff2b;
+  --feedback-info-fg: #9dd0ff;
+  --feedback-neutral-bg: #9ab4d82b;
+  --feedback-neutral-border: #9ab4d852;
+  --feedback-neutral-fg: #b7cae5;
+  --feedback-success-bg: #3dd7b02b;
+  --feedback-success-border: #3dd7b052;
+  --feedback-success-fg: #7cf0d0;
+  --feedback-success-solid: #48dcb6;
+  --feedback-warning-bg: #ffc14a2b;
+  --feedback-warning-border: #ffc14a52;
+  --feedback-warning-fg: #ffd98d;
+  --focus-ring: #79bfffe0;
+  --scrollbar-thumb: #dce9ff94;
+  --scrollbar-thumb-active: #dce9fff2;
+  --scrollbar-thumb-hover: #dce9ffcc;
+  --surface-back-to-top: #15264a;
+  --surface-back-to-top-active: #24508f;
+  --surface-back-to-top-hover: #1c3768;
+  --surface-card: #0c1530;
+  --surface-chip: #66b2ff1a;
+  --surface-chip-hover: #66b2ff36;
+  --surface-input: #070d21;
+  --surface-link-hover: #66b2ff1a;
+  --surface-page: #050a1a;
+  --surface-primary-button: linear-gradient(
+    135deg,
+    var(--brand-primary),
+    #66b2ff
+  );
+  --surface-primary-button-active: linear-gradient(135deg, #0079f2, #61a9f2);
+  --surface-primary-button-disabled: linear-gradient(135deg, #004f9f, #406f9f);
+  --surface-primary-button-hover: linear-gradient(135deg, #0086ff, #6bbcff);
+  --surface-raw-data-button: #13244a;
+  --surface-raw-data-button-active: #24508a;
+  --surface-raw-data-button-hover: #1a3765;
+  --surface-raw-data-head: var(--surface-page);
+  --surface-toggle-active: #66b2ff36;
+  --surface-toggle-hover: #66b2ff24;
+  --surface-toggle-indicator: #66b2ff38;
+  --surface-toggle-indicator-active: #66b2ff52;
+  --surface-tooltip: #dce9ff;
+  --text-link: #79bfff;
+  --text-link-hover: #d8ecff;
+  --text-link-underline: #66b2ff8c;
+  --text-link-underline-hover: #d7ecffd1;
+  --text-muted: #9ab4d8;
+  --text-primary: #f2f7ff;
+  --text-primary-button: #f8fbff;
+  --text-secondary: #ccdaf3;
+  --text-toggle-active: #79bfff;
+  --text-tooltip: #0c1530;
+}
+
+* {
+  box-sizing: border-box;
+  outline: 3px solid transparent;
+  outline-offset: 3px;
+  scroll-behavior: smooth;
+}
+
+:focus {
+  outline-color: var(--focus-ring);
+}
+
+:focus:not(:focus-visible) {
+  outline-color: transparent;
+}
+
+:focus-visible {
+  outline-color: var(--focus-ring);
+}
+
+::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+::-webkit-scrollbar-corner {
+  background-color: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-clip: content-box;
+  background-color: var(--scrollbar-thumb);
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-thumb-active);
+}
+
+::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+html {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  text-size-adjust: 100%;
+  -moz-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--surface-page);
+  color: var(--text-primary);
+  font-family:
+    "-apple-system", BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica,
+    Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  line-height: 1.5;
+  margin: 0;
+}
+
+body::before {
+  background-color: var(--surface-page);
+  bottom: 0;
+  content: "";
+  left: 0;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: -1;
+}
+
+.safari-26-top-bar-color {
+  background-color: var(--surface-page);
+  height: 16px;
+  mask-image: linear-gradient(transparent, transparent);
+  pointer-events: none;
+  position: fixed;
+  width: 100%;
+  z-index: 99999;
+  -webkit-mask-image: linear-gradient(transparent, transparent);
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  margin: 0 auto;
+}
+
+.theme-switcher-container {
+  align-self: flex-end;
+}
+
+.theme-switcher {
+  border-radius: 50%;
+  color: var(--brand-primary);
+  font-size: 1.5rem;
+  outline-offset: 0;
+  padding: 0.5rem;
+}
+
+.theme-switcher:hover {
+  background-color: var(--surface-toggle-hover);
+}
+
+.theme-switcher:active {
+  background-color: var(--surface-toggle-active);
+}
+
+.theme-switcher-content {
+  display: none;
+}
+
+.tippy-content .theme-switcher-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.theme-button {
+  border-radius: 0.5rem;
+  color: var(--text-secondary);
+  gap: 0.5rem;
+  justify-content: flex-start;
+  outline-offset: 0;
+  padding: 0.5rem 0.75rem;
+}
+
+.theme-button:hover {
+  background-color: var(--surface-toggle-hover);
+}
+
+.theme-button:active {
+  background-color: var(--surface-toggle-active);
+}
+
+.theme-button[data-selected="true"] {
+  color: var(--text-toggle-active);
+}
+
+.theme-button-icon {
+  font-size: 1.25em;
+}
+
+h1 {
+  font-family:
+    "Fraunces", "-apple-system", BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+    Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  line-height: 1;
+  margin: 0;
+  text-wrap: balance;
+}
+
+a {
+  color: var(--text-link);
+  text-decoration: underline;
+  text-decoration-color: var(--text-link-underline);
+  text-underline-offset: 0.25rem;
+  transition-duration: 233ms;
+  transition-property:
+    background-color, color, outline-color, text-decoration-color;
+  transition-timing-function: ease;
+}
+
+a:hover {
+  background-color: var(--surface-link-hover);
+  color: var(--text-link-hover);
+  text-decoration-color: var(--text-link-underline-hover);
+}
+
+a:active {
+  text-decoration-style: dashed;
+}
+
+button {
+  align-items: center;
+  background-color: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  transition-duration: 233ms;
+  transition-property:
+    background-color, color, opacity, outline-color, text-decoration-color,
+    visibility;
+  transition-timing-function: ease;
+}
+
+footer {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin-top: 1.5rem;
+  text-align: center;
+}
+
+.input-box {
+  position: relative;
+}
+
+.input {
+  background-color: var(--surface-input);
+  border: 1px solid var(--border-input);
+  border-radius: 999px;
+  color: inherit;
+  font: inherit;
+  margin: 0;
+  padding: 0.75rem 2.5rem 0.75rem 1.5rem;
+  transition: outline-color 233ms ease;
+  width: 100%;
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.input-clear {
+  border-radius: 50%;
+  color: var(--text-secondary);
+  font-size: 1.5rem;
+  opacity: 0;
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  visibility: hidden;
+}
+
+.primary-button {
+  background: var(--surface-primary-button);
+  border-radius: 999px;
+  color: var(--text-primary-button);
+  font-weight: 700;
+  padding: 0.75rem 1.5rem;
+  position: relative;
+}
+
+.primary-button:hover {
+  background: var(--surface-primary-button-hover);
+}
+
+.primary-button:active {
+  background: var(--surface-primary-button-active);
+}
+
+.primary-button:disabled {
+  background: var(--surface-primary-button-disabled);
+  cursor: not-allowed;
+}
+
+.primary-button-label {
+  visibility: visible;
+}
+
+.loader {
+  animation: loader-rotation 1s linear infinite;
+  border: 2.5px solid var(--brand-primary);
+  border-bottom-color: transparent !important;
+  border-radius: 50%;
+  height: 1.25em;
+  width: 1.25em;
+}
+
+@keyframes loader-rotation {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.primary-button-loader {
+  border-color: var(--text-primary-button);
+  position: absolute;
+  visibility: hidden;
+}
+
+.primary-button[data-loading="true"] .primary-button-label {
+  visibility: hidden;
+}
+
+.primary-button[data-loading="true"] .primary-button-loader {
+  visibility: visible;
+}
+
+.break-all {
+  word-break: break-all;
+}
+
+.visible {
+  opacity: 1 !important;
+  visibility: visible !important;
+}

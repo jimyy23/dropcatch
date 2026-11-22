@@ -80,6 +80,7 @@
     <td class="nowrap">
       {{template "switch" (dict "ID" .ID "CSRF" $csrf "Field" "catch" "On" .CatchEnabled "Label" "catch" "Title" "Drop-catch" "Back" $back)}}
       {{if .AutoCatchPD}}<span class="tag" title="enters drop-catch automatically on pending delete">auto-PD</span>{{end}}
+      {{if and (not (isZero .FireAt)) (or .CatchEnabled .AutoCatchPD) (ne .FireDoneAt.Unix .FireAt.Unix)}}<div class="small"><span class="tag tag-hot" title="scheduled blind registration at the registry release time">fire {{datetime .FireAt}}</span></div>{{end}}
       <div class="small">{{if .Armed}}<span class="st-armed">armed</span> <span class="muted">({{.ArmReason}})</span>{{else if .ArmReason}}<span class="muted">{{.ArmReason}}</span>{{end}}
       <span data-f="catch">{{template "catchstate" .CatchState}}</span></div>
       {{if .CatchRegistrars}}<div class="small muted">{{join .CatchRegistrars ", "}}</div>{{end}}

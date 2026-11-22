@@ -1,0 +1,82 @@
+html {
+  --syntax-punctuation: #6282ab;
+  --syntax-property: #1f3d68;
+  --syntax-boolean: #945f00;
+  --syntax-null: #005fcb;
+  --syntax-number: #c43356;
+  --syntax-string: #007a63;
+}
+
+html[data-theme="dark"] {
+  --syntax-punctuation: #9ab4d8;
+  --syntax-property: #d6e4ff;
+  --syntax-boolean: #ffd98d;
+  --syntax-null: #9dd0ff;
+  --syntax-number: #ff9bb2;
+  --syntax-string: #7cf0d0;
+}
+
+.json-viewer .collapser {
+  color: var(--syntax-punctuation);
+  font-size: 1.3125rem;
+  left: -1.3125rem;
+  position: absolute;
+  top: 0;
+}
+
+.json-viewer .collapser svg {
+  pointer-events: none;
+}
+
+.json-viewer .ellipsis {
+  color: var(--syntax-property);
+  display: none;
+}
+
+.json-viewer .ellipsis:after {
+  content: "…";
+  margin: 0 0.25rem;
+}
+
+.json-viewer .collapsible {
+  list-style-type: none;
+  margin: 0 0 0 2rem;
+  padding: 0;
+}
+
+.json-viewer .collapsible > li {
+  position: relative;
+}
+
+.json-viewer .collapsed > .ellipsis {
+  display: inline-block;
+}
+
+.json-viewer .collapsed > .collapsible {
+  display: none;
+}
+
+.json-viewer .token.punctuation,
+.json-viewer .token.operator {
+  color: var(--syntax-punctuation);
+}
+
+.json-viewer .token.property {
+  color: var(--syntax-property);
+}
+
+.json-viewer .token.boolean {
+  color: var(--syntax-boolean);
+}
+
+.json-viewer .token.null {
+  color: var(--syntax-null);
+}
+
+.json-viewer .token.number {
+  color: var(--syntax-number);
+}
+
+.json-viewer .token.string {
+  color: var(--syntax-string);
+}

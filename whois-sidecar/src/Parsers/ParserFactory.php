@@ -1,0 +1,110 @@
+<?php
+
+declare(strict_types=1);
+
+class ParserFactory
+{
+  /** @var array<string, list<string>> */
+  private static array $extensionToClassSuffix = [
+    "am" => ["am", "հայ"],
+    "ar" => ["ar"],
+    "at" => ["at"],
+    "aw" => ["aw", "nl"],
+    "ax" => ["ax"],
+    "bb" => ["bb"],
+    "bd" => ["bd"],
+    "be" => ["be"],
+    "bg" => ["bg", "бг"],
+    "bn" => ["bn"],
+    "bo" => ["bo"],
+    "br" => ["br"],
+    "bt" => ["bt"],
+    "cl" => ["cl"],
+    "cn" => ["cn", "中国", "中國"],
+    "comhk" => ["hk.com", "inc.hk", "ltd.hk", "hk.org"],
+    "cr" => ["cr"],
+    "cu" => ["cu"],
+    "cz" => ["cz"],
+    "ee" => ["ee"],
+    "eu" => ["eu", "ею", "ευ"],
+    "fi" => ["fi"],
+    "fr" => ["fr", "pm", "re", "tf", "wf", "yt"],
+    "ga" => ["ga", "sn"],
+    "gf" => ["gf", "mq"],
+    "gg" => ["gg"],
+    "gr" => ["gr", "ελ"],
+    "gt" => ["gt"],
+    "gw" => ["gw"],
+    "hk" => ["hk", "香港"],
+    "hm" => ["hm"],
+    "hu" => ["hu"],
+    "il" => ["il", "ישראל"],
+    "im" => ["im"],
+    "it" => ["it"],
+    "je" => ["je"],
+    "jo" => ["jo"],
+    "jo1" => ["الاردن"],
+    "jp" => ["jp"],
+    "kg" => ["kg"],
+    "kr" => ["kr", "한국"],
+    "kz" => ["kz", "қаз"],
+    "ls" => ["ls"],
+    "lt" => ["lt"],
+    "lu" => ["lu"],
+    "lv" => ["lv"],
+    "md" => ["md"],
+    "mk" => ["mk", "мкд"],
+    "mo" => ["mo", "澳門"],
+    "mw" => ["mw"],
+    "mx" => ["mx"],
+    "nc" => ["nc"],
+    "netza" => ["za.net", "za.org"],
+    "np" => ["np"],
+    "pf" => ["pf"],
+    "pl" => ["pl"],
+    "plco" => ["co.pl"],
+    "pt" => ["pt"],
+    "ro" => ["ro"],
+    "rs" => ["rs", "срб"],
+    "ru" => ["ru", "su", "рф", "net.ru", "org.ru", "pp.ru"],
+    "si" => ["si"],
+    "sk" => ["sk"],
+    "sm" => ["sm"],
+    "st" => ["st"],
+    "sv" => ["sv"],
+    "tg" => ["tg"],
+    "tm" => ["tm"],
+    "tn" => ["tn", "تونس"],
+    "tr" => ["tr"],
+    "tt" => ["tt"],
+    "tw" => ["tw", "台湾", "台灣"],
+    "tz" => ["tz"],
+    "ua" => ["ua"],
+    "ua1" => ["укр"],
+    "uk" => ["uk"],
+    "ukac" => ["ac.uk"],
+    "uz" => ["uz", "co.uz", "com.uz", "net.uz", "org.uz"],
+    "ve" => ["ve"],
+  ];
+
+  public static function create(string $extension, string $data): Parser
+  {
+    foreach (self::$extensionToClassSuffix as $classSuffix => $extensions) {
+      if (in_array(strtolower($extension), $extensions, true)) {
+        $class = "Parser" . strtoupper($classSuffix);
+
+        if (!class_exists($class)) {
+          throw new RuntimeException("Parser class $class does not exist.");
+        }
+
+        if (!is_subclass_of($class, Parser::class)) {
+          throw new RuntimeException("Parser class $class must extend Parser.");
+        }
+
+        return new $class($data);
+      }
+    }
+
+    return new Parser($data);
+  }
+}

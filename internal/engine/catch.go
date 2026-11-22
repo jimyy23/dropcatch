@@ -48,12 +48,24 @@ func (e *Engine) runCatch(parent context.Context, w *worker, d *store.Domain, na
 // still ends on success, pending, all registrars failing, the duration, or
 // stop.
 func (e *Engine) runSession(parent context.Context, w *worker, d *store.Domain, name domainutil.Name, trigger monitor.Observation, manual bool, by string) {
-	cfg := e.config()
-	start := time.Now()
-	deadline := start.Add(time.Duration(d.CatchDuration) * time.Minute)
+	deadline := time.Now().Add(time.Duration(d.CatchDuration) * time.Minute)
 	if !manual && d.CatchEnabled && !d.CatchEnd.IsZero() && d.CatchEnd.Before(deadline) && !(d.AutoCatchPD && d.PendingDelete) {
 		deadline = d.CatchEnd
 	}
+	mode := ""
+	if manual {
+		mode = "manual register by " + by
+	}
+	e.runSessionUntil(parent, w, d, name, trigger, mode, deadline)
+}
+
+// runSessionUntil is the order loop. mode "" is a monitor-triggered
+// drop-catch; "manual register" and "scheduled fire" are blind sessions: no
+// availability check, and the master monitor does not end them.
+func (e *Engine) runSessionUntil(parent context.Context, w *worker, d *store.Domain, name domainutil.Name, trigger monitor.Observation, mode string, deadline time.Time) {
+	cfg := e.config()
+	start := time.Now()
+	manual := mode != ""
 	var regs []registrar.Registrar
 	var skipped []string
 	for _, k := range d.CatchRegistrars {
@@ -72,7 +84,7 @@ func (e *Engine) runSession(parent context.Context, w *worker, d *store.Domain, 
 	if len(regs) == 0 {
 		why := "domain available but no usable registrar: "
 		if manual {
-			why = "manual register: no usable registrar: "
+			why = mode + ": no usable registrar: "
 		}
 		e.st.AddEvent(d.ID, "catch_skipped", "warn", why+strings.Join(skipped, ", "))
 		return
@@ -80,7 +92,7 @@ func (e *Engine) runSession(parent context.Context, w *worker, d *store.Domain, 
 	e.st.StartCatch(d.ID, deadline)
 	msg := fmt.Sprintf("drop-catch started on %s signal from %s; registrars: %s; until %s UTC", trigger.Status, trigger.Source, labels(regs), deadline.UTC().Format("2006-01-02 15:04:05"))
 	if manual {
-		msg = fmt.Sprintf("MANUAL register started by %s (no availability check); registrars: %s; until %s UTC", by, labels(regs), deadline.UTC().Format("2006-01-02 15:04:05"))
+		msg = fmt.Sprintf("%s started (no availability check); registrars: %s; until %s UTC", mode, labels(regs), deadline.UTC().Format("2006-01-02 15:04:05"))
 	}
 	if len(skipped) > 0 {
 		msg += "; skipped: " + strings.Join(skipped, ", ")
@@ -269,7 +281,7 @@ func (e *Engine) runSession(parent context.Context, w *worker, d *store.Domain, 
 		result = fmt.Sprintf("duration elapsed without success (%d attempts)", attempts.Load())
 	}
 	if manual {
-		result = "manual register: " + result
+		result = mode + ": " + result
 	}
 	e.st.EndCatch(d.ID, state, result, winner)
 	e.st.AddEvent(d.ID, "catch_"+state, level, result)

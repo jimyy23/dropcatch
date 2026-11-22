@@ -23,10 +23,11 @@ const (
 	ErrUnsupported         // source does not cover this suffix
 	ErrInvalid             // the name itself was rejected: no penalty
 	ErrBusy                // local budget exhausted (e.g. Regery per-IP limit): no penalty
+	ErrUnparsed            // answer received but not understood: counts as an error, never "available"
 )
 
 func (k ErrKind) String() string {
-	return [...]string{"", "error", "rate-limited", "unsupported", "invalid", "busy"}[k]
+	return [...]string{"", "error", "rate-limited", "unsupported", "invalid", "busy", "unparsed"}[k]
 }
 
 // LookupError carries the kind and an optional retry hint.

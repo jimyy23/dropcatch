@@ -210,7 +210,7 @@ func TestManualRegisterIgnoresAvailability(t *testing.T) {
 		t.Error("a second manual register while one runs must be refused")
 	}
 	d := waitState(t, st, id, store.CatchWon)
-	if d.CatchWonBy != "a" || !strings.HasPrefix(d.CatchResult, "manual register:") || b.calls.Load() == 0 {
+	if d.CatchWonBy != "a" || !strings.HasPrefix(d.CatchResult, "manual register") || b.calls.Load() == 0 {
 		t.Fatalf("won by %q result %q b=%d", d.CatchWonBy, d.CatchResult, b.calls.Load())
 	}
 }
@@ -254,5 +254,60 @@ func TestKeepSpecific(t *testing.T) {
 	o.Status = store.StatusAvailable
 	if keepSpecific(store.StatusPendingDelete, o) != store.StatusAvailable {
 		t.Fatal("available must win")
+	}
+}
+
+func TestExpectedReleaseTW(t *testing.T) {
+	// sina.com.tw: "Record expires on 2026-10-27 00:00:00 (UTC+8)" = RDAP 2026-10-26T16:00:00Z
+	exp := time.Date(2026, 10, 26, 16, 0, 0, 0, time.UTC)
+	at, err := ExpectedRelease("com.tw", exp)
+	if err != nil || !at.Equal(time.Date(2026, 11, 29, 6, 0, 0, 0, time.UTC)) {
+		t.Fatalf("sina.com.tw release = %s %v, want 2026-11-29 06:00:00 UTC", at, err)
+	}
+	// the Taiwan date counts, not the UTC date: 2026-10-27 23:30 UTC is 10-28 in Taiwan
+	at, _ = ExpectedRelease("tw", time.Date(2026, 10, 27, 23, 30, 0, 0, time.UTC))
+	if !at.Equal(time.Date(2026, 11, 30, 6, 0, 0, 0, time.UTC)) {
+		t.Fatalf("Taiwan-date rule: %s", at)
+	}
+	if _, err := ExpectedRelease("com", exp); err == nil {
+		t.Fatal(".com has no rule")
+	}
+}
+
+func TestScheduledFireIgnoresMonitor(t *testing.T) {
+	a := &reg{key: "a", winAfter: 3}
+	e, st, s, id := setup(t, a)
+	s.set(store.StatusPendingDelete) // the monitor never sees it free
+	fireAt := time.Now().Add(1500 * time.Millisecond).Truncate(time.Second)
+	st.UpdateDomainSettings(id, store.DomainSettings{MonitorEnabled: true, MonitorInterval: 3600, CatchEnabled: true, CatchInterval: 1,
+		CatchDuration: 1, CatchRegistrars: []string{"a"}, FireAt: fireAt, FireLead: 1, FireDuration: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	d := waitState(t, st, id, store.CatchWon)
+	if !strings.HasPrefix(d.CatchResult, "scheduled fire") || d.CatchStartedAt.Before(fireAt.Add(-2*time.Second)) {
+		t.Fatalf("result %q started %s (fire %s)", d.CatchResult, d.CatchStartedAt, fireAt)
+	}
+	if !d.FireDoneAt.Equal(fireAt) {
+		t.Fatalf("fire must be marked done: %s", d.FireDoneAt)
+	}
+	n := a.calls.Load()
+	time.Sleep(500 * time.Millisecond)
+	if a.calls.Load() != n {
+		t.Fatal("fire must not repeat")
+	}
+}
+
+func TestFireNotArmedDoesNothing(t *testing.T) {
+	a := &reg{key: "a", winAfter: 1}
+	e, st, _, id := setup(t, a)
+	st.UpdateDomainSettings(id, store.DomainSettings{MonitorEnabled: true, MonitorInterval: 3600, CatchInterval: 1, CatchDuration: 1,
+		CatchRegistrars: []string{"a"}, FireAt: time.Now().Add(500 * time.Millisecond), FireLead: 1, FireDuration: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	time.Sleep(2 * time.Second)
+	if a.calls.Load() != 0 {
+		t.Fatal("fire must not run while drop-catch is off")
 	}
 }

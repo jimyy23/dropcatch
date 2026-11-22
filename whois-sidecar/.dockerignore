@@ -1,0 +1,17 @@
+.git/
+.github/
+.idea/
+.vercel/
+.vscode/
+test/
+vendor/
+**/.DS_Store
+.dockerignore
+.editorconfig
+.gitignore
+.htaccess
+.vercelignore
+docker-compose.yml
+Dockerfile
+phpstan.neon
+README*.md

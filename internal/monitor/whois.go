@@ -126,15 +126,66 @@ func (w *Whois) Check(ctx context.Context, d domainutil.Name, prio bool) Observa
 	return o
 }
 
+// lookup asks the service for one data source at a time, never the
+// merged default: in merged mode RDAP flags override WHOIS, and an RDAP
+// answer served from a registry CDN cache (TWNIC ccrdap.twnic.tw kept copies
+// over 3 h old) made the monitor lag registrations by hours and flap between
+// available and pending_delete.
+//
+// Order: the suffix's preferred source first (RDAP where the bundled
+// sidecar busts the registry cache, else port-43/web WHOIS), then the other
+// one when the first fails (e.g. port 43 unreachable from this host). An
+// answer from either is used as is; failures are never "available".
 func (w *Whois) lookup(ctx context.Context, domain string) (string, *store.Info, error) {
+	order := []string{"whois", "rdap"}
+	if rdapFirst(domainutil.SuffixOf(domain)) {
+		order = []string{"rdap", "whois"}
+	}
+	var firstErr error
+	for i, src := range order {
+		st, info, err := w.query(ctx, domain, src)
+		if err == nil {
+			if info != nil {
+				info.Source = src
+			}
+			return st, info, nil
+		}
+		if i == 0 {
+			firstErr = err
+		}
+		// a rate limit or invalid name is authoritative enough; do not
+		// double the load on the registry
+		if k := KindOf(err); k == ErrInvalid || ctx.Err() != nil {
+			return "", nil, err
+		}
+	}
+	return "", nil, firstErr
+}
+
+// rdapFirstTLDs are registries whose RDAP is fresh through the sidecar's
+// cache-busting (whois-sidecar/src/RDAP.php) and whose port-43 WHOIS is
+// slow or firewalled for some hosts.
+var rdapFirstTLDs = map[string]bool{"tw": true}
+
+func rdapFirst(suffix string) bool {
+	tld := suffix
+	if i := strings.LastIndexByte(suffix, '.'); i >= 0 {
+		tld = suffix[i+1:]
+	}
+	return rdapFirstTLDs[tld]
+}
+
+// query runs one lookup with a single data source ("whois" or "rdap").
+func (w *Whois) query(ctx context.Context, domain, source string) (string, *store.Info, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(w.timeout.Load()))
 	defer cancel()
-	q := url.Values{"domain": {domain}, "json": {"1"}}
+	q := url.Values{"domain": {domain}, "json": {"1"}, source: {"1"}}
 	req, err := http.NewRequestWithContext(ctx, "GET", w.base+"/src/index.php?"+q.Encode(), nil)
 	if err != nil {
 		return "", nil, err
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cache-Control", "no-cache")
 	if w.auth != "" {
 		req.Header.Set("Authorization", w.auth)
 	}
@@ -154,7 +205,11 @@ func (w *Whois) lookup(ctx context.Context, domain string) (string, *store.Info,
 		}
 		return "", nil, lerr(k, "whois service HTTP %d", resp.StatusCode)
 	}
-	return parseWhois(body)
+	st, info, err := parseWhois(body)
+	if info != nil && source == "whois" {
+		info.Source = "whois"
+	}
+	return st, info, err
 }
 
 // parseWhois maps an upstream answer to a status. Only an explicit
@@ -176,7 +231,7 @@ func parseWhois(body []byte) (string, *store.Info, error) {
 		switch {
 		case a.RateLimited || strings.Contains(m, "rate limit"):
 			return "", nil, lerr(ErrRateLimited, "%s", m)
-		case strings.HasPrefix(m, "No WHOIS server found"), strings.HasPrefix(m, "No WHOIS or RDAP server found"), strings.Contains(m, "No WHOIS or RDAP parser"):
+		case strings.HasPrefix(m, "No WHOIS server found"), strings.HasPrefix(m, "No RDAP server found"), strings.HasPrefix(m, "No WHOIS or RDAP server found"), strings.Contains(m, "No WHOIS or RDAP parser"):
 			return "", nil, lerr(ErrUnsupported, "%s", m)
 		case strings.Contains(m, "is not a valid domain"):
 			return "", nil, lerr(ErrInvalid, "%s", m)
@@ -192,8 +247,11 @@ func parseWhois(body []byte) (string, *store.Info, error) {
 		return store.StatusReserved, nil, nil
 	}
 	if !a.Registered {
-		if a.Unknown && strings.TrimSpace(a.WhoisData) == "" && strings.TrimSpace(a.RDAPData) == "" {
-			return "", nil, lerr(ErrTransient, "whois service returned no data")
+		// "unknown" means the parser could not read the answer (e.g. .ch WHOIS
+		// returns a registered record the parser does not understand): never
+		// treat that as available.
+		if a.Unknown {
+			return "", nil, lerr(ErrUnparsed, "registry answer could not be parsed")
 		}
 		return store.StatusAvailable, nil, nil
 	}

@@ -452,7 +452,7 @@ func fmtLocalInput(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.UTC().Format("2006-01-02T15:04")
+	return t.UTC().Format("2006-01-02T15:04:05")
 }
 
 func fmtSecs(n int) string {

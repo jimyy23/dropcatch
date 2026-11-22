@@ -29,6 +29,9 @@
 <p>Registrar errors that retrying can't fix (bad keys, insufficient balance, unsupported suffix, premium name, missing contact) drop that registrar from the session and log a warning. Registrars only receive <i>orders</i> during a session. Availability is decided by the monitor, so no order calls are spent on routine checks.</p>
 <p>Set <code>ORDERS_DRY_RUN=true</code> in .env to rehearse: sessions run and log everything, but nothing is bought. Porkbun uses its official <code>dryRun</code> option, which also confirms the price.</p>
 
+<h2>Scheduled fire</h2>
+<p>For registries that release domains at a fixed time (currently <code>.tw</code>: 06:00:00 UTC on the 33rd day after the expiry date in Taiwan time), a domain can carry a <b>fire time</b>. From <i>lead</i> seconds before it until <i>duration</i> minutes after it, orders go to every selected registrar <b>without</b> checking availability, because registry data seen through WHOIS/RDAP can lag by hours. Set it on the domain page: either by hand (UTC) or "use the suffix release rule", which recomputes it whenever the expiry date changes. It fires once per fire time, and only while drop-catch is on.</p>
+
 <h2>Notifications</h2>
 <p>Telegram messages and Twilio calls are per-domain switches. To avoid false alarms from unstable registries, the admin is notified only when availability is <b>confirmed</b>: WHOIS/RDAP says available <b>and</b> at least one of Cloudean, Regery or a registrar API that supports the suffix agrees. Each availability episode is notified once. Orders start before confirmation, because speed matters more there.</p>
 <p>Optionally (Settings → "Confirm without WHOIS"), suffixes that WHOIS can't answer can be confirmed by two independent fallback sources instead.</p>

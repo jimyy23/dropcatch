@@ -6,3 +6,4 @@ data/
 tmp/
 third_party/
 /dropcatch
+whois-sidecar/

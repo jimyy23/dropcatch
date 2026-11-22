@@ -229,12 +229,19 @@ func (e *Engine) loop(ctx context.Context, w *worker) {
 			}
 		}
 		active := d.MonitorEnabled || armed
-		if !active {
+		fireStart, fireOK := e.fireDue(d, now)
+		if !active && !fireOK {
 			w.set("paused", time.Time{})
 			if !e.sleep(ctx, w, time.Hour) {
 				return
 			}
 			immediate = true
+			continue
+		}
+		// Scheduled fire: blind orders at the registry release time,
+		// independent of the monitor.
+		if fireOK && !now.Before(fireStart) {
+			e.fire(ctx, w, d)
 			continue
 		}
 		due := d.CheckedAt.Add(interval)
@@ -249,8 +256,20 @@ func (e *Engine) loop(ctx context.Context, w *worker) {
 			}
 			due = d.CheckedAt.Add(b)
 		}
+		if !active {
+			// only a scheduled fire keeps this worker alive
+			w.set("fire scheduled", fireStart)
+			if !e.sleep(ctx, w, fireWait(fireStart, time.Hour)) {
+				return
+			}
+			immediate = true
+			continue
+		}
 		if !immediate && now.Before(due) {
 			wait := time.Until(due)
+			if fireOK {
+				wait = min(wait, fireWait(fireStart, wait))
+			}
 			// re-evaluate when a catch window opens
 			if d.CatchEnabled && !d.CatchStart.IsZero() && now.Before(d.CatchStart) && time.Until(d.CatchStart) < wait {
 				wait = time.Until(d.CatchStart)
@@ -379,10 +398,23 @@ func (e *Engine) checkOnce(ctx context.Context, w *worker, d *store.Domain, arme
 		if o.Status == store.StatusAvailable || o.Status == store.StatusPendingDelete {
 			lvl = "alert"
 		}
-		e.st.AddEvent(d.ID, "status_change", lvl, fmt.Sprintf("%s → %s (via %s)", prev, o.Status, o.Source))
+		detail := fmt.Sprintf("%s → %s (via %s)", prev, o.Status, o.Source)
+		// the registry creation time is the real timing signal, not when we noticed
+		if o.Info != nil && !o.Info.Created.IsZero() && o.Status != store.StatusAvailable &&
+			(prev == store.StatusAvailable || prev == store.StatusPendingDelete || prev == store.StatusRedemption) {
+			detail += fmt.Sprintf("; registry creation %s UTC (detected %s after)", o.Info.Created.UTC().Format("2006-01-02 15:04:05"),
+				time.Since(o.Info.Created).Round(time.Second))
+			if o.Info.Registrar != "" {
+				detail += ", registrar " + o.Info.Registrar
+			}
+		}
+		e.st.AddEvent(d.ID, "status_change", lvl, detail)
 	}
 	if o.Status == store.StatusPendingDelete && prev != store.StatusPendingDelete && d.AutoCatchPD {
 		e.st.AddEvent(d.ID, "auto_catch_armed", "alert", "pending delete seen: drop-catch armed automatically")
+	}
+	if d2, err := e.st.GetDomain(d.ID); err == nil {
+		e.RefreshFireAt(d2) // registry release time from the (possibly new) expiry
 	}
 	if o.Info != nil && !d.Expires.IsZero() && !o.Info.Expires.IsZero() && !o.Info.Expires.Equal(d.Expires) {
 		e.st.AddEvent(d.ID, "expiry_change", "info", fmt.Sprintf("%s → %s", d.Expires.Format("2006-01-02"), o.Info.Expires.Format("2006-01-02")))

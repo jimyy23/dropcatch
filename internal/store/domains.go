@@ -83,6 +83,14 @@ type Domain struct {
 	CatchAttempts  int
 	CatchResult    string
 	CatchWonBy     string
+
+	// Scheduled fire: at FireAt-FireLead orders start at every selected
+	// registrar regardless of the monitor, for FireDuration minutes.
+	FireAt       time.Time
+	FireLead     int  // seconds
+	FireDuration int  // minutes
+	FireAuto     bool // FireAt is derived from the suffix release rule
+	FireDoneAt   time.Time
 }
 
 // InWindow reports whether t is inside the optional catch window.
@@ -131,19 +139,23 @@ catch_enabled,catch_interval,catch_start,catch_end,catch_duration,catch_registra
 notify_call,notify_telegram,status,status_source,status_since,checked_at,last_error,error_streak,
 info_source,info_at,registrar,created,expires,updated,available_date,statuses,nameservers,pending_delete,redemption,whois_server,raw_whois,
 confirmed_avail_at,confirm_tried_at,confirm_detail,
-catch_state,catch_started_at,catch_deadline,catch_ended_at,catch_attempts,catch_result,catch_won_by`
+catch_state,catch_started_at,catch_deadline,catch_ended_at,catch_attempts,catch_result,catch_won_by,
+fire_at,fire_lead,fire_duration,fire_auto,fire_done_at`
 
 func scanDomain(sc interface{ Scan(...any) error }) (*Domain, error) {
 	d := &Domain{}
 	var ca, cs, ce, ss, chk, ia, cr, ex, up, av, cfa, cft, cst, cdl, cen int64
 	var me, cEn, apd, nc, nt, pd, rd int
 	var regs, sts, nss string
+	var fa, fd int64
+	var fauto int
 	err := sc.Scan(&d.ID, &d.Name, &d.UName, &d.Suffix, &d.Note, &ca, &me, &d.MonitorInterval,
 		&cEn, &d.CatchInterval, &cs, &ce, &d.CatchDuration, &regs, &apd,
 		&nc, &nt, &d.Status, &d.StatusSource, &ss, &chk, &d.LastError, &d.ErrorStreak,
 		&d.InfoSource, &ia, &d.Registrar, &cr, &ex, &up, &av, &sts, &nss, &pd, &rd, &d.WhoisServer, &d.RawWhois,
 		&cfa, &cft, &d.ConfirmDetail,
-		&d.CatchState, &cst, &cdl, &cen, &d.CatchAttempts, &d.CatchResult, &d.CatchWonBy)
+		&d.CatchState, &cst, &cdl, &cen, &d.CatchAttempts, &d.CatchResult, &d.CatchWonBy,
+		&fa, &d.FireLead, &d.FireDuration, &fauto, &fd)
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +163,7 @@ func scanDomain(sc interface{ Scan(...any) error }) (*Domain, error) {
 	d.InfoAt, d.Created, d.Expires, d.Updated, d.AvailableDate = FromUnix(ia), FromUnix(cr), FromUnix(ex), FromUnix(up), FromUnix(av)
 	d.ConfirmedAvailAt, d.ConfirmTriedAt = FromUnix(cfa), FromUnix(cft)
 	d.CatchStartedAt, d.CatchDeadline, d.CatchEndedAt = FromUnix(cst), FromUnix(cdl), FromUnix(cen)
+	d.FireAt, d.FireDoneAt, d.FireAuto = FromUnix(fa), FromUnix(fd), fauto == 1
 	d.MonitorEnabled, d.CatchEnabled, d.AutoCatchPD, d.NotifyCall, d.NotifyTelegram = me == 1, cEn == 1, apd == 1, nc == 1, nt == 1
 	d.PendingDelete, d.Redemption = pd == 1, rd == 1
 	d.CatchRegistrars, d.Statuses, d.Nameservers = SplitList(regs), splitLines(sts), SplitList(nss)
@@ -252,13 +265,18 @@ type DomainSettings struct {
 	AutoCatchPD     bool
 	NotifyCall      bool
 	NotifyTelegram  bool
+	FireAt          time.Time
+	FireLead        int
+	FireDuration    int
+	FireAuto        bool
 }
 
 func (s *Store) UpdateDomainSettings(id int64, x DomainSettings) error {
 	_, err := s.W.Exec(`UPDATE domains SET note=?,monitor_enabled=?,monitor_interval=?,catch_enabled=?,catch_interval=?,catch_start=?,catch_end=?,
-		catch_duration=?,catch_registrars=?,auto_catch_pd=?,notify_call=?,notify_telegram=? WHERE id=?`,
+		catch_duration=?,catch_registrars=?,auto_catch_pd=?,notify_call=?,notify_telegram=?,fire_at=?,fire_lead=?,fire_duration=?,fire_auto=? WHERE id=?`,
 		x.Note, b2i(x.MonitorEnabled), x.MonitorInterval, b2i(x.CatchEnabled), x.CatchInterval, Unix(x.CatchStart), Unix(x.CatchEnd),
-		x.CatchDuration, JoinList(x.CatchRegistrars), b2i(x.AutoCatchPD), b2i(x.NotifyCall), b2i(x.NotifyTelegram), id)
+		x.CatchDuration, JoinList(x.CatchRegistrars), b2i(x.AutoCatchPD), b2i(x.NotifyCall), b2i(x.NotifyTelegram),
+		Unix(x.FireAt), x.FireLead, x.FireDuration, b2i(x.FireAuto), id)
 	return err
 }
 
@@ -472,4 +490,14 @@ func (s *Store) ListEvents(domainID int64, level string, limit, offset int) ([]E
 		}
 	}
 	return out, total
+}
+
+// SetFireAt updates the computed fire time (suffix release rule).
+func (s *Store) SetFireAt(id int64, at time.Time) {
+	s.W.Exec(`UPDATE domains SET fire_at=? WHERE id=?`, Unix(at), id)
+}
+
+// MarkFired records that the fire scheduled at `at` was executed.
+func (s *Store) MarkFired(id int64, at time.Time) {
+	s.W.Exec(`UPDATE domains SET fire_done_at=? WHERE id=?`, Unix(at), id)
 }

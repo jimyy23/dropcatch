@@ -171,7 +171,33 @@ func Open(path string) (*Store, error) {
 	if _, err := w.Exec(schema); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := s.migrate(); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return s, nil
+}
+
+// migrate adds columns introduced after the initial schema.
+func (s *Store) migrate() error {
+	add := []struct{ table, col, def string }{
+		{"domains", "fire_at", "INTEGER NOT NULL DEFAULT 0"},       // scheduled blind registration start (UTC)
+		{"domains", "fire_lead", "INTEGER NOT NULL DEFAULT 10"},    // seconds before fire_at to start
+		{"domains", "fire_duration", "INTEGER NOT NULL DEFAULT 5"}, // minutes of order attempts
+		{"domains", "fire_auto", "INTEGER NOT NULL DEFAULT 1"},     // fire_at computed from the suffix release rule
+		{"domains", "fire_done_at", "INTEGER NOT NULL DEFAULT 0"},  // fire_at value of the last executed fire
+	}
+	for _, a := range add {
+		var n int
+		if err := s.W.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, a.table, a.col).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := s.W.Exec(`ALTER TABLE ` + a.table + ` ADD COLUMN ` + a.col + ` ` + a.def); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error {

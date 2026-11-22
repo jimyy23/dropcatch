@@ -51,7 +51,9 @@ func TestParseWhoisEdgeCases(t *testing.T) {
 		kind   ErrKind
 	}{
 		// unknown with no raw data must never read as available
-		{`{"code":0,"msg":"ok","data":{"unknown":true,"registered":false,"whoisData":"","rdapData":""}}`, "", ErrTransient},
+		{`{"code":0,"msg":"ok","data":{"unknown":true,"registered":false,"whoisData":"","rdapData":""}}`, "", ErrUnparsed},
+		// unparseable but non-empty registry answer (e.g. .ch): never available
+		{`{"code":0,"msg":"ok","data":{"unknown":true,"registered":false,"whoisData":"Domain name:\nnic.ch\nRegistrar:\nnone","rdapData":""}}`, "", ErrUnparsed},
 		{`{"code":0,"msg":"ok","data":{"registered":true,"pendingDelete":true,"status":[{"text":"Pending Delete"}]}}`, store.StatusPendingDelete, ErrNone},
 		{`{"code":0,"msg":"ok","data":{"registered":true,"redemptionPeriod":true}}`, store.StatusRedemption, ErrNone},
 		{`{"code":0,"msg":"ok","data":{"reserved":true}}`, store.StatusReserved, ErrNone},
@@ -266,7 +268,8 @@ func TestExternalWhoisFallbackOrder(t *testing.T) {
 	if res.Obs.Err != nil || !IsWhois(res.Obs.Source) || res.Obs.Source == SrcWhois || res.Obs.Info == nil || res.Obs.Info.Registrar != "GoDaddy" {
 		t.Fatalf("expected registration data from the second external sidecar, got %+v", res.Obs)
 	}
-	if internalHits != 1 || ext1Hits != 1 || ext2Hits != 1 || cl.calls != 0 {
+	// each failing sidecar is asked twice (preferred source, then the other)
+	if internalHits != 2 || ext1Hits != 2 || ext2Hits != 1 || cl.calls != 0 {
 		t.Fatalf("hits internal=%d ext1=%d ext2=%d cloudean=%d", internalHits, ext1Hits, ext2Hits, cl.calls)
 	}
 	// the rate-limited internal sidecar is benched for .tw; next check starts at the externals
@@ -281,5 +284,41 @@ func TestExternalWhoisFallbackOrder(t *testing.T) {
 	cl.status = store.StatusAvailable
 	if c := m.Confirm(context.Background(), d, &ext, false); !c.Confirmed {
 		t.Fatalf("external WHOIS + Cloudean should confirm: %s", c.Summary())
+	}
+}
+
+func TestWhoisSourceOrder(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		src := "merged"
+		if q.Get("whois") == "1" {
+			src = "whois"
+		} else if q.Get("rdap") == "1" {
+			src = "rdap"
+		}
+		got = append(got, src)
+		if src == "merged" {
+			t.Errorf("the merged WHOIS+RDAP mode must never be used")
+		}
+		if src == "whois" {
+			// port 43 unreachable from this host
+			io.WriteString(w, `{"code":1,"msg":"WHOIS lookup failed for 'x': Operation timed out.","data":null}`)
+			return
+		}
+		io.WriteString(w, `{"code":0,"msg":"ok","data":{"registered":true,"pendingDelete":true,"creationDateISO8601":"1998-08-21T10:19:34Z","expirationDateISO8601":"2026-10-26T16:00:00Z","status":[{"text":"pendingdelete"}]}}`)
+	}))
+	defer srv.Close()
+	w := NewWhois(srv.URL, "", 5*time.Second, 0)
+	d, _ := domainutil.Parse("sina.com.tw")
+	o := w.Check(context.Background(), d, true)
+	if o.Err != nil || o.Status != store.StatusPendingDelete || o.Info.Source != "rdap" || len(got) != 1 || got[0] != "rdap" {
+		t.Fatalf(".tw must ask RDAP first: %v %+v", got, o)
+	}
+	got = nil
+	d, _ = domainutil.Parse("example.com")
+	o = w.Check(context.Background(), d, true)
+	if o.Err != nil || len(got) != 2 || got[0] != "whois" || got[1] != "rdap" {
+		t.Fatalf(".com: WHOIS first, RDAP when WHOIS fails: %v %+v", got, o)
 	}
 }
