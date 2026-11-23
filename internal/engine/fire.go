@@ -83,14 +83,19 @@ func (e *Engine) RefreshFireAt(d *store.Domain) time.Time {
 	if !ok {
 		return d.FireAt
 	}
-	at, err := ExpectedRelease(ReleaseInputFor(d))
+	in := e.ReleaseInput(d)
+	at, err := ExpectedRelease(in)
 	if err != nil {
 		return d.FireAt
 	}
 	if !at.Equal(d.FireAt) {
 		e.st.SetFireAt(d.ID, at)
-		e.st.AddEvent(d.ID, "release_time", "info", fmt.Sprintf("expected registry release %s UTC (%s rule)",
-			at.UTC().Format("2006-01-02 15:04:05"), rule.Name))
+		src := rule.Name + " rule"
+		if !in.Listed.IsZero() {
+			src += ", from CIRA's published TBR list"
+		}
+		e.st.AddEvent(d.ID, "release_time", "info", fmt.Sprintf("expected registry release %s UTC (%s)",
+			at.UTC().Format("2006-01-02 15:04:05"), src))
 	}
 	return at
 }

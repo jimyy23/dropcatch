@@ -45,6 +45,8 @@ type Engine struct {
 	cfg     Config
 	workers map[int64]*worker
 	ctx     context.Context
+
+	tbr *TBRList // CIRA's published To-Be-Released list (.ca)
 }
 
 type worker struct {
@@ -67,7 +69,7 @@ type WorkerState struct {
 }
 
 func New(st *store.Store, mon *monitor.Manager, regs *registrar.Set, note *notify.Notifier, price *pricing.Service, log *slog.Logger) *Engine {
-	return &Engine{st: st, mon: mon, regs: regs, note: note, price: price, log: log, workers: map[int64]*worker{}}
+	return &Engine{st: st, mon: mon, regs: regs, note: note, price: price, log: log, workers: map[int64]*worker{}, tbr: NewTBRList(CIRATBRURL)}
 }
 
 func (e *Engine) SetConfig(c Config) {
@@ -97,6 +99,7 @@ func (e *Engine) Run(ctx context.Context) {
 	for _, id := range e.st.DomainIDs() {
 		e.Start(id)
 	}
+	go e.tbrLoop(ctx)
 	t := time.NewTicker(6 * time.Hour)
 	defer t.Stop()
 	for {

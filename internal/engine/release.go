@@ -14,6 +14,7 @@ type ReleaseInput struct {
 	Expires            time.Time // registry expiry
 	PendingDelete      bool      // currently in pending delete (TBR for .ca)
 	PendingDeleteSince time.Time // when the pending-delete status began (registry "last changed" or first seen)
+	Listed             time.Time // session from the registry's published release list (CIRA TBR), if listed
 }
 
 // ReleaseRule describes when a registry releases a deleted domain, so a
@@ -45,9 +46,10 @@ var ReleaseRules = []ReleaseRule{
 		Name:     ".ca (CIRA TBR)",
 		Suffixes: []string{"ca"},
 		Note: "To-Be-Released session every Wednesday 19:00:00 UTC (year-round). A domain enters TBR when it turns pending delete " +
-			"after redemption; deleted before Monday 07:00 UTC -> that Wednesday, Monday 07:00 to Wednesday 19:00 -> the following " +
+			"after redemption. The session date comes from CIRA's published TBR list (fetched hourly); for a domain not on the list yet " +
+			"it is computed: deleted before Monday 07:00 UTC -> that Wednesday, Monday 07:00 to Wednesday 19:00 -> the following " +
 			"Wednesday (2.5 to 9.5 days on the list). Sessions last up to ~60 min; unclaimed names reach general availability about " +
-			"30 min after. CIRA's published TBR list is authoritative: override the fire time if it differs",
+			"30 min after",
 		DefaultLead:     10,
 		DefaultDuration: 90,
 		Compute:         caRelease,
@@ -89,10 +91,13 @@ func twRelease(in ReleaseInput) (time.Time, error) {
 	return day.Add(6 * time.Hour), nil
 }
 
-// caRelease: the TBR session for a domain that turned pending delete at
-// `since`. Sessions are Wednesdays 19:00 UTC; deletions from Monday 07:00 UTC
+// caRelease: the session from CIRA's TBR list when the domain is on it,
+// else computed for a domain that turned pending delete at `since`. Sessions are Wednesdays 19:00 UTC; deletions from Monday 07:00 UTC
 // up to the session start go to the following week's session.
 func caRelease(in ReleaseInput) (time.Time, error) {
+	if !in.Listed.IsZero() {
+		return in.Listed, nil // CIRA's published TBR list is authoritative
+	}
 	if !in.PendingDelete {
 		return time.Time{}, fmt.Errorf("not in pending delete (TBR) yet")
 	}
