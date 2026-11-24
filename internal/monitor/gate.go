@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 )
@@ -64,6 +65,13 @@ func (g *Gate) Wait(ctx context.Context, prio bool) error {
 	}
 }
 
+// NextFree is when the next request may be sent.
+func (g *Gate) NextFree() time.Time {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.next
+}
+
 // TryNow reserves a slot only if one is free immediately.
 func (g *Gate) TryNow() bool {
 	g.mu.Lock()
@@ -85,12 +93,25 @@ type Gates struct {
 
 func NewGates(gap time.Duration) *Gates { return &Gates{gap: gap, m: map[string]*Gate{}} }
 
+// MinSuffixGap raises the spacing for registries with strict WHOIS rate
+// limits. whois.dns.lu (and the public .lu checkers) throttle at a few
+// lookups per 30 s and then return wrong answers.
+var MinSuffixGap = map[string]time.Duration{"lu": 8 * time.Second}
+
+func gapFor(key string, gap time.Duration) time.Duration {
+	tld := key
+	if i := strings.LastIndexByte(key, '.'); i >= 0 {
+		tld = key[i+1:]
+	}
+	return max(gap, MinSuffixGap[tld])
+}
+
 func (g *Gates) Get(key string) *Gate {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	x, ok := g.m[key]
 	if !ok {
-		x = NewGate(g.gap)
+		x = NewGate(gapFor(key, g.gap))
 		g.m[key] = x
 	}
 	return x
@@ -100,7 +121,7 @@ func (g *Gates) SetGap(d time.Duration) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.gap = d
-	for _, x := range g.m {
-		x.SetGap(d)
+	for k, x := range g.m {
+		x.SetGap(gapFor(k, d))
 	}
 }

@@ -268,8 +268,8 @@ func TestExternalWhoisFallbackOrder(t *testing.T) {
 	if res.Obs.Err != nil || !IsWhois(res.Obs.Source) || res.Obs.Source == SrcWhois || res.Obs.Info == nil || res.Obs.Info.Registrar != "GoDaddy" {
 		t.Fatalf("expected registration data from the second external sidecar, got %+v", res.Obs)
 	}
-	// each failing sidecar is asked twice (preferred source, then the other)
-	if internalHits != 2 || ext1Hits != 2 || ext2Hits != 1 || cl.calls != 0 {
+	// .tw: each sidecar is asked for RDAP only (port 43 belongs to the direct TWNIC source)
+	if internalHits != 1 || ext1Hits != 1 || ext2Hits != 1 || cl.calls != 0 {
 		t.Fatalf("hits internal=%d ext1=%d ext2=%d cloudean=%d", internalHits, ext1Hits, ext2Hits, cl.calls)
 	}
 	// the rate-limited internal sidecar is benched for .tw; next check starts at the externals
@@ -313,7 +313,7 @@ func TestWhoisSourceOrder(t *testing.T) {
 	d, _ := domainutil.Parse("sina.com.tw")
 	o := w.Check(context.Background(), d, true)
 	if o.Err != nil || o.Status != store.StatusPendingDelete || o.Info.Source != "rdap" || len(got) != 1 || got[0] != "rdap" {
-		t.Fatalf(".tw must ask RDAP first: %v %+v", got, o)
+		t.Fatalf(".tw must ask RDAP only: %v %+v", got, o)
 	}
 	got = nil
 	d, _ = domainutil.Parse("example.com")

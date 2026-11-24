@@ -29,8 +29,8 @@ func TestLiveWhoisModes(t *testing.T) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		ws, wi, we := w.lookup(ctx, d.ASCII)
-		ms, mi, me := w.query(ctx, d.ASCII, "whois")
+		ws, wi, _, _, we := w.lookup(ctx, d.ASCII)
+		ms, mi, _, me := w.query(ctx, d.ASCII, "whois")
 		_ = ms
 		cancel()
 		exp := func(i interface{ String() string }) string { return "" }

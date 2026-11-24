@@ -61,15 +61,17 @@ func (s *Server) parseTemplates() error {
 			}
 			return int(time.Until(t).Hours() / 24)
 		},
-		"secs":   fmtSecs,
-		"ms":     func(n int64) string { return fmt.Sprintf("%.1fs", float64(n)/1000) },
-		"has":    func(list []string, x string) bool { return contains(list, x) },
-		"add":    func(a, b int) int { return a + b },
-		"sub":    func(a, b int) int { return a - b },
-		"now":    func() time.Time { return time.Now().UTC() },
-		"lower":  strings.ToLower,
-		"srcLbl": srcLabel,
-		"query":  func(v url.Values, kv ...string) template.URL { return template.URL(withQuery(v, kv...)) },
+		"secs":      fmtSecs,
+		"ms":        func(n int64) string { return fmt.Sprintf("%.1fs", float64(n)/1000) },
+		"has":       func(list []string, x string) bool { return contains(list, x) },
+		"add":       func(a, b int) int { return a + b },
+		"sub":       func(a, b int) int { return a - b },
+		"now":       func() time.Time { return time.Now().UTC() },
+		"lower":     strings.ToLower,
+		"srcLbl":    srcLabel,
+		"hmsms":     func(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05.000") },
+		"msBetween": func(a, b time.Time) int64 { return b.Sub(a).Milliseconds() },
+		"query":     func(v url.Values, kv ...string) template.URL { return template.URL(withQuery(v, kv...)) },
 		"dict": func(kv ...any) map[string]any {
 			m := map[string]any{}
 			for i := 0; i+1 < len(kv); i += 2 {
@@ -511,6 +513,8 @@ func srcLabel(s string) string {
 	switch s {
 	case "whois":
 		return "WHOIS/RDAP"
+	case "twnic":
+		return "TWNIC direct"
 	case "cloudean":
 		return "Cloudean"
 	case "regery":

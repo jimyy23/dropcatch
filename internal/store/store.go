@@ -185,6 +185,27 @@ func (s *Store) migrate() error {
 		{"domains", "fire_duration", "INTEGER NOT NULL DEFAULT 5"}, // minutes of order attempts
 		{"domains", "fire_auto", "INTEGER NOT NULL DEFAULT 1"},     // fire_at computed from the suffix release rule
 		{"domains", "fire_done_at", "INTEGER NOT NULL DEFAULT 0"},  // fire_at value of the last executed fire
+		{"domains", "snapshot_max", "INTEGER NOT NULL DEFAULT 0"},  // newest registry snapshot seen (RDAP)
+		{"domains", "cand_status", "TEXT NOT NULL DEFAULT ''"},     // status change awaiting agreeing answers
+		{"domains", "cand_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"domains", "cand_since", "INTEGER NOT NULL DEFAULT 0"}, // first answer showing the candidate (ms)
+	}
+	if _, err := s.W.Exec(`CREATE TABLE IF NOT EXISTS polls (
+	id INTEGER PRIMARY KEY,
+	domain_id INTEGER NOT NULL,
+	start_ms INTEGER NOT NULL,
+	end_ms INTEGER NOT NULL,
+	purpose TEXT NOT NULL,
+	source TEXT NOT NULL,
+	via TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT '',
+	verdict TEXT NOT NULL DEFAULT '',
+	detail TEXT NOT NULL DEFAULT '',
+	raw TEXT NOT NULL DEFAULT '',
+	raw_ref INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_polls_domain ON polls(domain_id, id DESC);`); err != nil {
+		return err
 	}
 	for _, a := range add {
 		var n int
@@ -274,6 +295,7 @@ func (s *Store) Prune(days int) {
 	}
 	cut := time.Now().Add(-time.Duration(days) * 24 * time.Hour).Unix()
 	s.W.Exec(`DELETE FROM checks WHERE ts<?`, cut)
+	s.W.Exec(`DELETE FROM polls WHERE start_ms<?`, time.Now().Add(-time.Duration(min(days, 14))*24*time.Hour).UnixMilli())
 	s.W.Exec(`DELETE FROM events WHERE ts<?`, cut)
 	s.W.Exec(`DELETE FROM orders WHERE ts<?`, cut)
 	s.W.Exec(`DELETE FROM sessions WHERE expires_at<?`, time.Now().Unix())

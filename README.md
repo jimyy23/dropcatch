@@ -88,6 +88,31 @@ On the **first available signal**, orders go to **all selected registrars concur
 
 Errors that retrying can't fix (keys, funds, premium, unsupported suffix) drop only that registrar. Registrars receive only order calls during a session. Availability comes from the monitor, so no paid or rate-limited order calls are wasted.
 
+## Fresh registry data (freshness guard)
+
+Registry answers can come from old copies: TWNIC's RDAP is served by replicas holding different database snapshots
+(minutes to 4+ hours old), so consecutive answers alternated between a new registration and the old pending-delete
+record. Every monitor answer therefore goes through a guard before it may change anything:
+
+- **Never backwards.** An answer from an older registry snapshot than one already seen, with an older creation or
+  expiry date, or a pending-delete answer predating the current state is ignored. A registered domain with a known
+  creation date does not revert to pending delete or available on an undated answer.
+- **Agreement.** A status change needs 2 consecutive agreeing answers, except for self-evident ones (a direct
+  port-43 answer, a delegation appearing in the live zone, a registration created after the last known one).
+  Orders still start on the first plausible "available".
+- **Debug stream.** Every raw answer is stored with request start/end (ms) and the guard's verdict
+  (*committed, pending n/m, agrees, stale, weak, no verdict*) on the domain page under "Registry answers";
+  only committed changes go to Events. Detection lag is measured from the first fresh answer.
+
+**.tw direct source** (`TWNIC direct`, on by default): port-43 WHOIS `whois.twnic.net.tw` (live; TWNIC limits it
+per IP: one query per ~6 s is fine, faster gets the IP blocked for ~6 min, so it is shared by all .tw domains and
+paced at 6.5 s), RDAP `ccrdap.twnic.tw` with its snapshot time, and the live `.tw` DNS zone (republished every
+30-90 s, not rate-limited: a delegation appearing means registered). The sidecar remains the fallback.
+
+**Release watch.** Around a domain's expected release the monitor polls fast: `.tw` 05:55-06:10 UTC every second
+(DNS each tick, port 43 whenever the per-IP budget allows, RDAP every 30 s), `.ca` every 10 s through the TBR
+session, `.lu` every 1-2 min from End Date -1 day 23:00 to End Date 12:00 UTC.
+
 ## Scheduled fire (registry release time)
 
 Some registries release pending-delete domains at a fixed, predictable time. For those, waiting for a monitor
@@ -101,6 +126,7 @@ The fire time is set by hand (UTC), or computed from a suffix **release rule** a
 | Rule | Suffixes | When | Defaults |
 |---|---|---|---|
 | `.tw` (TWNIC) | `.tw` and all its second-level suffixes (`.com.tw`, `.net.tw`, `.org.tw`, `.idv.tw`, …) | 33rd day after the expiry **date in Taiwan time (UTC+8)**, at 06:00:00 UTC. Example: expiry 2026-10-27 00:00 UTC+8 → release 2026-11-29 06:00:00 UTC | lead 10 s, 5 min |
+| `.lu` (DNS-LU) | `.lu` | `ACTIVE (PENDING_DELETE)` for 29 days, then deleted in a **sweep on the End Date** (UTC day it entered pending delete + 29; ExpiredDomains' End Date): most names between 00:00 and ~01:00 UTC, some later in the morning, a few a day early. **No blind orders**: the registry is watched from End Date -1 day 23:00 to 12:00 UTC (every 60 s 00:00-06:00, else 2 min; `whois.dns.lu` is rate-limited, so `.lu` lookups are spaced ≥ 8 s) and orders start on the first "unregistered". Each drop is logged with its window ("DROP between … and …"). Computed only when the switch to pending delete was observed; otherwise enter the End Date 00:00 UTC by hand (a manual time is fired blind) | watch 00:00-12:00 |
 | `.ca` (CIRA TBR) | `.ca` | To-Be-Released session, **every Wednesday 19:00:00 UTC** year-round. The date comes from **CIRA's published TBR list** (`https://www.cira.ca/en/wp-json/cira/v1/domains/tbr`, fetched hourly while a `.ca` domain is tracked); a listed domain gets its fire time even before the monitor sees pending delete. For a domain not on the list yet, it is computed from when the domain turned pending delete (registry "updated" date, else first seen by the monitor): before Monday 07:00 UTC → that Wednesday; Monday 07:00 to Wednesday 19:00 → the following Wednesday. Sessions last up to ~60 min; leftovers reach general availability ~30 min later | lead 10 s, 90 min |
 
 When a domain becomes registered, the event log records the **registry creation time** and how long after it the

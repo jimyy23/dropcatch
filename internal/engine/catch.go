@@ -202,6 +202,10 @@ func (e *Engine) runSessionUntil(parent context.Context, w *worker, d *store.Dom
 	monDone := make(chan struct{})
 	go func() {
 		defer close(monDone)
+		if mode == "scheduled fire" {
+			e.fireWatch(cctx, ccancel, w, d)
+			return
+		}
 		if manual {
 			<-cctx.Done()
 			return
@@ -231,6 +235,7 @@ func (e *Engine) runSessionUntil(parent context.Context, w *worker, d *store.Dom
 				c := store.Check{Purpose: "catch", Source: a.Source, MS: a.Elapsed.Milliseconds(), Detail: a.Detail, Result: a.Status}
 				if a.Err != nil {
 					c.Result, c.Detail = "error", a.Err.Error()
+					e.logPoll(d.ID, "catch", a, "error")
 				}
 				e.st.AddCheck(d.ID, c)
 			}
@@ -238,11 +243,14 @@ func (e *Engine) runSessionUntil(parent context.Context, w *worker, d *store.Dom
 			if o.Err != nil {
 				continue
 			}
-			if prev, err := e.st.GetDomain(d.ID); err == nil {
-				o.Status = keepSpecific(prev.Status, o)
+			prev, err := e.st.GetDomain(d.ID)
+			if err != nil {
+				continue
 			}
-			e.st.SaveObservation(d.ID, o.Status, o.Source, "", o.Info)
-			if o.Status == store.StatusAvailable {
+			// the guard keeps old copies from ending the session; the
+			// status in force (not the raw answer) decides
+			o.Status = e.observe(prev, o, "catch").Status
+			if o.Status == store.StatusAvailable || o.Status == store.StatusPendingDelete || o.Status == store.StatusRedemption {
 				regSeen = 0
 				continue
 			}

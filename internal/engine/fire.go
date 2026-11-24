@@ -21,6 +21,9 @@ func (e *Engine) fireDue(d *store.Domain, now time.Time) (time.Time, bool) {
 	if len(d.CatchRegistrars) == 0 || !(d.CatchEnabled || d.AutoCatchPD) || d.CatchState == store.CatchWon || d.CatchState == store.CatchActive {
 		return time.Time{}, false
 	}
+	if r, ok := RuleFor(d.Suffix); ok && r.NoBlindFire && d.FireAuto {
+		return time.Time{}, false // computed release window: watched, not fired blind
+	}
 	start := d.FireAt.Add(-time.Duration(d.FireLead) * time.Second)
 	end := d.FireAt.Add(time.Duration(max(d.FireDuration, 1)) * time.Minute)
 	if now.After(end) {
@@ -86,6 +89,12 @@ func (e *Engine) RefreshFireAt(d *store.Domain) time.Time {
 	in := e.ReleaseInput(d)
 	at, err := ExpectedRelease(in)
 	if err != nil {
+		// keep a past fire time (history) but drop a future one that no
+		// longer applies, e.g. the domain was renewed or re-registered
+		if !d.FireAt.IsZero() && d.FireAt.After(time.Now()) && (d.Status == store.StatusRegistered || d.Status == store.StatusAvailable) {
+			e.st.SetFireAt(d.ID, time.Time{})
+			return time.Time{}
+		}
 		return d.FireAt
 	}
 	if !at.Equal(d.FireAt) {
@@ -98,4 +107,91 @@ func (e *Engine) RefreshFireAt(d *store.Domain) time.Time {
 			at.UTC().Format("2006-01-02 15:04:05"), src))
 	}
 	return at
+}
+
+// watchWindow returns the intensified polling around the expected release
+// (FireAt): its start, whether it is active now, and the poll interval.
+// Watching ends early once a registration after the release is known.
+func (e *Engine) watchWindow(d *store.Domain, now time.Time) (time.Time, bool, time.Duration) {
+	if d.FireAt.IsZero() {
+		return time.Time{}, false, 0
+	}
+	from, to, every := DefaultWatch(d.FireAt, now)
+	if r, ok := RuleFor(d.Suffix); ok {
+		from, to, every = r.WatchWindow(d.FireAt, now)
+	}
+	if now.After(to) {
+		return time.Time{}, false, 0
+	}
+	if d.Status == store.StatusRegistered && !d.Created.IsZero() && !d.Created.Before(d.FireAt.Add(-time.Hour)) {
+		return time.Time{}, false, 0 // already re-registered
+	}
+	return from, !now.Before(from), every
+}
+
+// watchCheck is one tick of the release watch. For .tw it asks the registry
+// directly: port-43 WHOIS whenever TWNIC's per-IP budget allows (one query
+// per ~6 s, shared by all .tw domains), otherwise the live DNS zone
+// (delegation = registered), plus RDAP every 30 s. Other suffixes use the
+// normal source plan.
+func (e *Engine) watchCheck(ctx context.Context, w *worker, d *store.Domain, armed bool) {
+	tw := e.mon.TWNIC()
+	if !monitor.IsTW(d.Suffix) || tw == nil {
+		e.checkOnce(ctx, w, d, armed)
+		return
+	}
+	name, err := domainutil.Parse(d.Name)
+	if err != nil {
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	var obs []monitor.Observation
+	if o, ok := tw.TryPort43(cctx, name.ASCII); ok {
+		obs = append(obs, o)
+	} else {
+		obs = append(obs, tw.DNS(cctx, name.ASCII))
+		if tw.RDAPDue(name.ASCII, 30*time.Second) {
+			obs = append(obs, tw.RDAP(cctx, name.ASCII))
+		}
+	}
+	for _, o := range obs {
+		if o.Err != nil {
+			e.logPoll(d.ID, "watch", o, "error")
+			continue
+		}
+		cur, err := e.st.GetDomain(d.ID)
+		if err != nil {
+			return
+		}
+		e.apply(ctx, w, cur, name, o, cur.Armed(time.Now()) && cur.CatchState != store.CatchWon, "watch")
+	}
+	e.st.Touch(d.ID)
+}
+
+// fireWatch keeps watching the registry during a scheduled fire, so the
+// release and a registration are logged with their times. It ends the
+// session when someone else's registration after the release is committed.
+func (e *Engine) fireWatch(ctx context.Context, cancel context.CancelCauseFunc, w *worker, d *store.Domain) {
+	for ctx.Err() == nil {
+		cur, err := e.st.GetDomain(d.ID)
+		if err != nil {
+			return
+		}
+		_, watching, every := e.watchWindow(cur, time.Now())
+		if !watching {
+			every = 10 * time.Second
+		} else {
+			e.watchCheck(ctx, w, cur, true)
+		}
+		if cur, err = e.st.GetDomain(d.ID); err == nil && cur.Status == store.StatusRegistered && !cur.Created.IsZero() &&
+			!cur.Created.Before(cur.FireAt.Add(-time.Minute)) {
+			sleepCtx(ctx, 3*time.Second) // our own order may have won meanwhile
+			cancel(errLost)
+			return
+		}
+		if !sleepCtx(ctx, every) {
+			return
+		}
+	}
 }

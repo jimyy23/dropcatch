@@ -184,6 +184,17 @@
   {{else}}<tr><td colspan="6" class="muted">no checks yet</td></tr>{{end}}
 </table>
 
+<h2>Registry answers (debug)</h2>
+<p class="small muted">Every raw answer with request start/end (UTC, ms) and what the freshness guard did with it: <i>committed</i> (status changed), <i>pending n/m</i> (waiting for agreeing answers), <i>agrees</i>, <i>stale</i>/<i>weak</i> (older registry copy, ignored), <i>no verdict</i> (DNS: not delegated). Only committed changes appear in Events. Identical raw answers are stored once. Last 100 shown; kept 14 days.</p>
+<table class="compact">
+  <tr><th>start (UTC)</th><th class="num">ms</th><th>purpose</th><th>source</th><th>answer</th><th>verdict</th><th>detail / raw</th></tr>
+  {{range $d.Polls}}
+  <tr><td class="nowrap">{{hmsms .Start}}</td><td class="num">{{msBetween .Start .End}}</td><td>{{.Purpose}}</td><td>{{srcLbl .Source}}{{if .Via}} <span class="muted small">{{.Via}}</span>{{end}}</td>
+    <td>{{if eq .Status "error"}}<span class="st-error">error</span>{{else}}{{.Status}}{{end}}</td><td class="small">{{.Verdict}}</td>
+    <td class="small wrap">{{.Detail}}{{if .Raw}}<details><summary>raw{{if .RawRef}} (same as #{{.RawRef}}){{end}}</summary><pre class="raw">{{.Raw}}</pre></details>{{end}}</td></tr>
+  {{else}}<tr><td colspan="7" class="muted">no answers yet</td></tr>{{end}}
+</table>
+
 <h2>Events</h2>
 {{template "eventtable" $d.Events}}
 {{end}}

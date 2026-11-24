@@ -96,6 +96,11 @@ func (e *Engine) Run(ctx context.Context) {
 	e.ctx = ctx
 	e.mu.Unlock()
 	e.st.MarkInterruptedCatches()
+	// recompute automatic fire times with the current rules (drops ones that
+	// no longer apply, e.g. computed from a renewed expiry)
+	for _, d := range e.st.ListDomains() {
+		e.RefreshFireAt(d)
+	}
 	for _, id := range e.st.DomainIDs() {
 		e.Start(id)
 	}
@@ -232,6 +237,10 @@ func (e *Engine) loop(ctx context.Context, w *worker) {
 			}
 		}
 		active := d.MonitorEnabled || armed
+		watchFrom, watching, every := e.watchWindow(d, now)
+		if watching && active && every < interval {
+			interval = every
+		}
 		fireStart, fireOK := e.fireDue(d, now)
 		if !active && !fireOK {
 			w.set("paused", time.Time{})
@@ -273,6 +282,10 @@ func (e *Engine) loop(ctx context.Context, w *worker) {
 			if fireOK {
 				wait = min(wait, fireWait(fireStart, wait))
 			}
+			// wake when the release watch starts
+			if !watchFrom.IsZero() && now.Before(watchFrom) && time.Until(watchFrom) < wait {
+				wait = time.Until(watchFrom)
+			}
 			// re-evaluate when a catch window opens
 			if d.CatchEnabled && !d.CatchStart.IsZero() && now.Before(d.CatchStart) && time.Until(d.CatchStart) < wait {
 				wait = time.Until(d.CatchStart)
@@ -290,7 +303,11 @@ func (e *Engine) loop(ctx context.Context, w *worker) {
 		}
 		immediate = false
 		w.set("checking", time.Time{})
-		e.checkOnce(ctx, w, d, armed)
+		if watching {
+			e.watchCheck(ctx, w, d, armed)
+		} else {
+			e.checkOnce(ctx, w, d, armed)
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -380,6 +397,7 @@ func (e *Engine) checkOnce(ctx context.Context, w *worker, d *store.Domain, arme
 		c := store.Check{Purpose: "monitor", Source: a.Source, MS: a.Elapsed.Milliseconds(), Detail: a.Detail}
 		if a.Err != nil {
 			c.Result, c.Detail = "error", monitor.KindOf(a.Err).String()+": "+a.Err.Error()
+			e.logPoll(d.ID, "monitor", a, "error")
 		} else {
 			c.Result = a.Status
 		}
@@ -393,35 +411,14 @@ func (e *Engine) checkOnce(ctx context.Context, w *worker, d *store.Domain, arme
 		}
 		return
 	}
+	e.apply(ctx, w, d, name, o, armed, "monitor")
+}
+
+// apply handles one successful answer: freshness guard, then orders and
+// confirmation on availability.
+func (e *Engine) apply(ctx context.Context, w *worker, d *store.Domain, name domainutil.Name, o monitor.Observation, armed bool, purpose string) {
 	prev := d.Status
-	o.Status = keepSpecific(prev, o)
-	e.st.SaveObservation(d.ID, o.Status, o.Source, "", o.Info)
-	if prev != o.Status {
-		lvl := "info"
-		if o.Status == store.StatusAvailable || o.Status == store.StatusPendingDelete {
-			lvl = "alert"
-		}
-		detail := fmt.Sprintf("%s → %s (via %s)", prev, o.Status, o.Source)
-		// the registry creation time is the real timing signal, not when we noticed
-		if o.Info != nil && !o.Info.Created.IsZero() && o.Status != store.StatusAvailable &&
-			(prev == store.StatusAvailable || prev == store.StatusPendingDelete || prev == store.StatusRedemption) {
-			detail += fmt.Sprintf("; registry creation %s UTC (detected %s after)", o.Info.Created.UTC().Format("2006-01-02 15:04:05"),
-				time.Since(o.Info.Created).Round(time.Second))
-			if o.Info.Registrar != "" {
-				detail += ", registrar " + o.Info.Registrar
-			}
-		}
-		e.st.AddEvent(d.ID, "status_change", lvl, detail)
-	}
-	if o.Status == store.StatusPendingDelete && prev != store.StatusPendingDelete && d.AutoCatchPD {
-		e.st.AddEvent(d.ID, "auto_catch_armed", "alert", "pending delete seen: drop-catch armed automatically")
-	}
-	if d2, err := e.st.GetDomain(d.ID); err == nil {
-		e.RefreshFireAt(d2) // registry release time from the (possibly new) expiry
-	}
-	if o.Info != nil && !d.Expires.IsZero() && !o.Info.Expires.IsZero() && !o.Info.Expires.Equal(d.Expires) {
-		e.st.AddEvent(d.ID, "expiry_change", "info", fmt.Sprintf("%s → %s", d.Expires.Format("2006-01-02"), o.Info.Expires.Format("2006-01-02")))
-	}
+	ob := e.observe(d, o, purpose)
 
 	d2, err := e.st.GetDomain(d.ID)
 	if err != nil {
@@ -429,11 +426,14 @@ func (e *Engine) checkOnce(ctx context.Context, w *worker, d *store.Domain, arme
 	}
 	armed = d2.Armed(time.Now()) && d2.CatchState != store.CatchWon
 
-	if o.Status == store.StatusAvailable {
-		// Human notification needs a cross-check; it runs alongside the catch.
-		go e.maybeConfirm(ctx, w, d2, name, o)
-		// Fast path: orders start on the first available signal, without
-		// waiting for confirmation. A session that ended (lost / expired) is
+	if ob.Accepted && ob.Raw == store.StatusAvailable {
+		// Human notification needs committed availability plus a cross-check.
+		if ob.Status == store.StatusAvailable {
+			go e.maybeConfirm(ctx, w, d2, name, o)
+		}
+		// Fast path: orders start on the first plausible available answer,
+		// without waiting for agreeing answers (an order for a name that is
+		// not free just fails). A session that ended (lost / expired) is
 		// only re-entered for a NEW availability episode (the domain was seen
 		// not available in between); a pending order is never re-ordered
 		// automatically. "reset & re-arm" in the UI overrides both.
@@ -442,12 +442,14 @@ func (e *Engine) checkOnce(ctx context.Context, w *worker, d *store.Domain, arme
 			case store.CatchIdle:
 				e.runCatch(ctx, w, d2, name, o)
 			case store.CatchLost, store.CatchExpired:
-				if prev != store.StatusAvailable {
+				// same episode while "available" is committed or still
+				// awaiting agreeing answers
+				if prev != store.StatusAvailable && d.CandStatus != store.StatusAvailable {
 					e.runCatch(ctx, w, d2, name, o)
 				}
 			}
 		}
-	} else if !d2.ConfirmedAvailAt.IsZero() {
+	} else if ob.Status != store.StatusAvailable && !d2.ConfirmedAvailAt.IsZero() {
 		// availability episode over: the next one notifies again
 		e.st.SetConfirmed(d.ID, time.Time{}, "")
 	}

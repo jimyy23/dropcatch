@@ -63,6 +63,14 @@ type Observation struct {
 	Err     error
 	Elapsed time.Duration
 	Detail  string
+
+	Start time.Time // request start (end = Start + Elapsed)
+	Via   string    // protocol used: port43, rdap, dns, sidecar-whois, sidecar-rdap, api
+	Raw   string    // full raw response, kept for the debug history
+	// Weak: an answer that may come from an old registry snapshot (e.g. an
+	// RDAP 404, which carries no snapshot time). Never overrides a newer
+	// registration.
+	Weak bool
 }
 
 func (o Observation) Available() bool { return o.Err == nil && o.Status == store.StatusAvailable }

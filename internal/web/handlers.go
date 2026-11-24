@@ -242,6 +242,7 @@ type detailData struct {
 	Release    time.Time         // computed from the rule and the registry data
 	ReleaseErr string            // why Release is unknown
 	TBR        *engine.TBRStatus // CIRA list status (.ca only)
+	Polls      []store.Poll      // raw answers with verdicts (debug stream)
 	TBRListed  bool              // the domain is on CIRA's list
 	Armed      bool
 	ArmReason  string
@@ -317,7 +318,7 @@ func (s *Server) renderDetail(w http.ResponseWriter, r *http.Request, d *store.D
 	}
 	data := detailData{
 		D: d, Rule: rule, Release: release, ReleaseErr: releaseErr, TBR: tbr, TBRListed: tbrListed, Armed: d.Armed(now), ArmReason: d.ArmReason(now), Worker: s.Eng.States()[d.ID],
-		Checks: s.St.ListChecks(d.ID, 60), Orders: s.St.ListOrders(d.ID, 100), Events: ev,
+		Checks: s.St.ListChecks(d.ID, 60), Polls: s.St.ListPolls(d.ID, 100), Orders: s.St.ListOrders(d.ID, 100), Events: ev,
 		Registrars: opts, Book: book, Plan: s.Eng.Monitor().Plan(d.Suffix), Health: health, Probe: probe,
 		CallOK: n.CallConfigured(), TelegramOK: n.TelegramConfigured(),
 	}

@@ -168,10 +168,15 @@ func TestExpiredSessionNotRestartedInSameEpisode(t *testing.T) {
 	if d, _ := st.GetDomain(id); d.CatchState != store.CatchExpired || a.calls.Load() != n {
 		t.Fatalf("session restarted within the same availability episode (state %s)", d.CatchState)
 	}
-	// new episode: registered, then available again
+	// new episode: registered (two agreeing answers commit it), then available again
 	s.set(store.StatusRegistered)
 	e.CheckNow(id)
 	time.Sleep(300 * time.Millisecond)
+	e.CheckNow(id)
+	time.Sleep(300 * time.Millisecond)
+	if d, _ := st.GetDomain(id); d.Status != store.StatusRegistered {
+		t.Fatalf("two registered answers must commit: %s", d.Status)
+	}
 	s.set(store.StatusAvailable)
 	e.CheckNow(id)
 	waitState(t, st, id, store.CatchActive)
@@ -260,17 +265,21 @@ func TestKeepSpecific(t *testing.T) {
 func TestExpectedReleaseTW(t *testing.T) {
 	// sina.com.tw: "Record expires on 2026-10-27 00:00:00 (UTC+8)" = RDAP 2026-10-26T16:00:00Z
 	exp := time.Date(2026, 10, 26, 16, 0, 0, 0, time.UTC)
-	at, err := ExpectedRelease(ReleaseInput{Suffix: "com.tw", Expires: exp})
+	at, err := ExpectedRelease(ReleaseInput{Suffix: "com.tw", Expires: exp, PendingDelete: true})
 	if err != nil || !at.Equal(time.Date(2026, 11, 29, 6, 0, 0, 0, time.UTC)) {
 		t.Fatalf("sina.com.tw release = %s %v, want 2026-11-29 06:00:00 UTC", at, err)
 	}
 	// the Taiwan date counts, not the UTC date: 2026-10-27 23:30 UTC is 10-28 in Taiwan
-	at, _ = ExpectedRelease(ReleaseInput{Suffix: "tw", Expires: time.Date(2026, 10, 27, 23, 30, 0, 0, time.UTC)})
+	at, _ = ExpectedRelease(ReleaseInput{Suffix: "tw", Expires: time.Date(2026, 10, 27, 23, 30, 0, 0, time.UTC), PendingDelete: true})
 	if !at.Equal(time.Date(2026, 11, 30, 6, 0, 0, 0, time.UTC)) {
 		t.Fatalf("Taiwan-date rule: %s", at)
 	}
 	if _, err := ExpectedRelease(ReleaseInput{Suffix: "com", Expires: exp}); err == nil {
 		t.Fatal(".com has no rule")
+	}
+	// mbjq.tw re-registered: expiry 2027-11-23 must not yield a release
+	if _, err := ExpectedRelease(ReleaseInput{Suffix: "tw", Expires: time.Date(2027, 11, 23, 6, 0, 42, 0, time.UTC)}); err == nil {
+		t.Fatal("registered .tw must not get a release time")
 	}
 	if r, _ := RuleFor("com.tw"); r.Name != ".tw (TWNIC)" {
 		t.Fatalf("rule name %q", r.Name)

@@ -91,6 +91,12 @@ type Domain struct {
 	FireDuration int  // minutes
 	FireAuto     bool // FireAt is derived from the suffix release rule
 	FireDoneAt   time.Time
+
+	// Freshness guard (see engine.observe).
+	SnapshotMax time.Time // newest registry snapshot seen
+	CandStatus  string    // status change awaiting agreeing answers
+	CandCount   int
+	CandSince   time.Time // first answer showing CandStatus
 }
 
 // InWindow reports whether t is inside the optional catch window.
@@ -140,14 +146,14 @@ notify_call,notify_telegram,status,status_source,status_since,checked_at,last_er
 info_source,info_at,registrar,created,expires,updated,available_date,statuses,nameservers,pending_delete,redemption,whois_server,raw_whois,
 confirmed_avail_at,confirm_tried_at,confirm_detail,
 catch_state,catch_started_at,catch_deadline,catch_ended_at,catch_attempts,catch_result,catch_won_by,
-fire_at,fire_lead,fire_duration,fire_auto,fire_done_at`
+fire_at,fire_lead,fire_duration,fire_auto,fire_done_at,snapshot_max,cand_status,cand_count,cand_since`
 
 func scanDomain(sc interface{ Scan(...any) error }) (*Domain, error) {
 	d := &Domain{}
 	var ca, cs, ce, ss, chk, ia, cr, ex, up, av, cfa, cft, cst, cdl, cen int64
 	var me, cEn, apd, nc, nt, pd, rd int
 	var regs, sts, nss string
-	var fa, fd int64
+	var fa, fd, smax, csince int64
 	var fauto int
 	err := sc.Scan(&d.ID, &d.Name, &d.UName, &d.Suffix, &d.Note, &ca, &me, &d.MonitorInterval,
 		&cEn, &d.CatchInterval, &cs, &ce, &d.CatchDuration, &regs, &apd,
@@ -155,7 +161,7 @@ func scanDomain(sc interface{ Scan(...any) error }) (*Domain, error) {
 		&d.InfoSource, &ia, &d.Registrar, &cr, &ex, &up, &av, &sts, &nss, &pd, &rd, &d.WhoisServer, &d.RawWhois,
 		&cfa, &cft, &d.ConfirmDetail,
 		&d.CatchState, &cst, &cdl, &cen, &d.CatchAttempts, &d.CatchResult, &d.CatchWonBy,
-		&fa, &d.FireLead, &d.FireDuration, &fauto, &fd)
+		&fa, &d.FireLead, &d.FireDuration, &fauto, &fd, &smax, &d.CandStatus, &d.CandCount, &csince)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +170,10 @@ func scanDomain(sc interface{ Scan(...any) error }) (*Domain, error) {
 	d.ConfirmedAvailAt, d.ConfirmTriedAt = FromUnix(cfa), FromUnix(cft)
 	d.CatchStartedAt, d.CatchDeadline, d.CatchEndedAt = FromUnix(cst), FromUnix(cdl), FromUnix(cen)
 	d.FireAt, d.FireDoneAt, d.FireAuto = FromUnix(fa), FromUnix(fd), fauto == 1
+	d.SnapshotMax = FromUnix(smax)
+	if csince > 0 {
+		d.CandSince = time.UnixMilli(csince).UTC()
+	}
 	d.MonitorEnabled, d.CatchEnabled, d.AutoCatchPD, d.NotifyCall, d.NotifyTelegram = me == 1, cEn == 1, apd == 1, nc == 1, nt == 1
 	d.PendingDelete, d.Redemption = pd == 1, rd == 1
 	d.CatchRegistrars, d.Statuses, d.Nameservers = SplitList(regs), splitLines(sts), SplitList(nss)
@@ -304,6 +314,7 @@ type Info struct {
 	Redemption    bool
 	WhoisServer   string
 	Raw           string
+	Snapshot      time.Time // registry database snapshot time (RDAP "last update of RDAP database")
 }
 
 // SaveObservation stores the outcome of a monitor check. status=="" means the
@@ -505,4 +516,93 @@ func (s *Store) MarkFired(id int64, at time.Time) {
 // SetFireTiming sets the scheduled-fire lead (seconds) and duration (minutes).
 func (s *Store) SetFireTiming(id int64, lead, duration int) {
 	s.W.Exec(`UPDATE domains SET fire_lead=?, fire_duration=? WHERE id=?`, lead, duration, id)
+}
+
+// SetCandidate records a status change awaiting agreeing answers ("" clears it).
+func (s *Store) SetCandidate(id int64, status string, count int, since time.Time) {
+	ms := int64(0)
+	if !since.IsZero() {
+		ms = since.UnixMilli()
+	}
+	s.W.Exec(`UPDATE domains SET cand_status=?, cand_count=?, cand_since=? WHERE id=?`, status, count, ms, id)
+}
+
+// SetSnapshotMax raises the newest registry snapshot seen.
+func (s *Store) SetSnapshotMax(id int64, at time.Time) {
+	s.W.Exec(`UPDATE domains SET snapshot_max=? WHERE id=? AND snapshot_max<?`, Unix(at), id, Unix(at))
+}
+
+// Touch records a successful check that did not change the stored status.
+func (s *Store) Touch(id int64) {
+	s.W.Exec(`UPDATE domains SET checked_at=?, last_error='', error_streak=0 WHERE id=?`, time.Now().Unix(), id)
+}
+
+// Poll is one raw registry/source answer, kept for debugging.
+type Poll struct {
+	ID       int64
+	DomainID int64
+	Start    time.Time
+	End      time.Time
+	Purpose  string // monitor | watch | catch | confirm
+	Source   string
+	Via      string
+	Status   string
+	Verdict  string // accepted | committed | pending n/m | stale: ... | no verdict | error
+	Detail   string
+	Raw      string
+	RawRef   int64 // raw identical to poll #RawRef (stored once)
+}
+
+// AddPoll stores a poll. A raw answer identical to the previous one of the
+// same domain, source and protocol is stored as a reference.
+func (s *Store) AddPoll(p Poll) {
+	if len(p.Raw) > 256<<10 {
+		p.Raw = p.Raw[:256<<10]
+	}
+	var prevID, prevRef int64
+	var prevRaw string
+	if s.W.QueryRow(`SELECT id, raw, raw_ref FROM polls WHERE domain_id=? AND source=? AND via=? ORDER BY id DESC LIMIT 1`,
+		p.DomainID, p.Source, p.Via).Scan(&prevID, &prevRaw, &prevRef) == nil && p.Raw != "" {
+		orig := prevID
+		if prevRef != 0 {
+			orig = prevRef
+			s.W.QueryRow(`SELECT raw FROM polls WHERE id=?`, prevRef).Scan(&prevRaw)
+		}
+		if prevRaw == p.Raw {
+			p.Raw, p.RawRef = "", orig
+		}
+	}
+	s.W.Exec(`INSERT INTO polls(domain_id,start_ms,end_ms,purpose,source,via,status,verdict,detail,raw,raw_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		p.DomainID, p.Start.UnixMilli(), p.End.UnixMilli(), p.Purpose, p.Source, p.Via, p.Status, p.Verdict, p.Detail, p.Raw, p.RawRef)
+}
+
+// ListPolls returns the latest polls of a domain, raw included (references resolved).
+func (s *Store) ListPolls(domainID int64, limit int) []Poll {
+	rows, err := s.R.Query(`SELECT p.id,p.start_ms,p.end_ms,p.purpose,p.source,p.via,p.status,p.verdict,p.detail,
+		CASE WHEN p.raw_ref<>0 THEN COALESCE((SELECT raw FROM polls r WHERE r.id=p.raw_ref),'') ELSE p.raw END, p.raw_ref
+		FROM polls p WHERE p.domain_id=? ORDER BY p.id DESC LIMIT ?`, domainID, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []Poll
+	for rows.Next() {
+		var p Poll
+		var st, en int64
+		if rows.Scan(&p.ID, &st, &en, &p.Purpose, &p.Source, &p.Via, &p.Status, &p.Verdict, &p.Detail, &p.Raw, &p.RawRef) == nil {
+			p.DomainID, p.Start, p.End = domainID, time.UnixMilli(st).UTC(), time.UnixMilli(en).UTC()
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// LastPollWith returns the start of the latest poll answering status before t.
+func (s *Store) LastPollWith(domainID int64, status string, before time.Time) time.Time {
+	var ms int64
+	if s.R.QueryRow(`SELECT COALESCE(MAX(start_ms),0) FROM polls WHERE domain_id=? AND status=? AND start_ms<?`,
+		domainID, status, before.UnixMilli()).Scan(&ms) != nil || ms == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms).UTC()
 }

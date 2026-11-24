@@ -61,7 +61,7 @@ func NewExternalWhois(baseURL, password string, timeout, gap time.Duration) *Who
 
 // IsWhois reports whether a source name is a WHOIS/RDAP lookup (internal or external).
 func IsWhois(name string) bool {
-	return name == SrcWhois || strings.HasPrefix(name, SrcWhoisExtPrefix)
+	return name == SrcWhois || name == SrcTWNIC || strings.HasPrefix(name, SrcWhoisExtPrefix)
 }
 
 func (w *Whois) Name() string  { return w.name }
@@ -118,7 +118,12 @@ func (w *Whois) Check(ctx context.Context, d domainutil.Name, prio bool) Observa
 		o.Err = lerr(ErrBusy, "%v", err)
 		return o
 	}
-	o.Status, o.Info, o.Err = w.lookup(ctx, d.ASCII)
+	o.Start = time.Now()
+	var via string
+	o.Status, o.Info, via, o.Raw, o.Err = w.lookup(ctx, d.ASCII)
+	o.Via = "sidecar-" + via
+	// an RDAP 404 carries no snapshot time: it may come from an old copy
+	o.Weak = via == "rdap" && o.Status == store.StatusAvailable
 	o.Elapsed = time.Since(start)
 	if o.Info != nil {
 		o.Detail = strings.Join(o.Info.Statuses, ", ")
@@ -136,30 +141,31 @@ func (w *Whois) Check(ctx context.Context, d domainutil.Name, prio bool) Observa
 // sidecar busts the registry cache, else port-43/web WHOIS), then the other
 // one when the first fails (e.g. port 43 unreachable from this host). An
 // answer from either is used as is; failures are never "available".
-func (w *Whois) lookup(ctx context.Context, domain string) (string, *store.Info, error) {
+func (w *Whois) lookup(ctx context.Context, domain string) (string, *store.Info, string, string, error) {
 	order := []string{"whois", "rdap"}
 	if rdapFirst(domainutil.SuffixOf(domain)) {
-		order = []string{"rdap", "whois"}
+		// .tw port 43 is limited per IP and paced by the direct TWNIC
+		// source; the sidecar must not spend that budget
+		order = []string{"rdap"}
 	}
 	var firstErr error
+	var firstRaw string
 	for i, src := range order {
-		st, info, err := w.query(ctx, domain, src)
+		st, info, raw, err := w.query(ctx, domain, src)
 		if err == nil {
 			if info != nil {
 				info.Source = src
 			}
-			return st, info, nil
+			return st, info, src, raw, nil
 		}
 		if i == 0 {
-			firstErr = err
+			firstErr, firstRaw = err, raw
 		}
-		// a rate limit or invalid name is authoritative enough; do not
-		// double the load on the registry
 		if k := KindOf(err); k == ErrInvalid || ctx.Err() != nil {
-			return "", nil, err
+			return "", nil, src, raw, err
 		}
 	}
-	return "", nil, firstErr
+	return "", nil, order[0], firstRaw, firstErr
 }
 
 // rdapFirstTLDs are registries whose RDAP is fresh through the sidecar's
@@ -176,13 +182,13 @@ func rdapFirst(suffix string) bool {
 }
 
 // query runs one lookup with a single data source ("whois" or "rdap").
-func (w *Whois) query(ctx context.Context, domain, source string) (string, *store.Info, error) {
+func (w *Whois) query(ctx context.Context, domain, source string) (string, *store.Info, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(w.timeout.Load()))
 	defer cancel()
 	q := url.Values{"domain": {domain}, "json": {"1"}, source: {"1"}}
 	req, err := http.NewRequestWithContext(ctx, "GET", w.base+"/src/index.php?"+q.Encode(), nil)
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Cache-Control", "no-cache")
@@ -191,25 +197,25 @@ func (w *Whois) query(ctx context.Context, domain, source string) (string, *stor
 	}
 	resp, err := w.http.Do(req)
 	if err != nil {
-		return "", nil, lerr(ErrTransient, "whois service: %v", err)
+		return "", nil, "", lerr(ErrTransient, "whois service: %v", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return "", nil, lerr(ErrTransient, "whois service: %v", err)
+		return "", nil, "", lerr(ErrTransient, "whois service: %v", err)
 	}
 	if resp.StatusCode != 200 {
 		k := ErrTransient
 		if resp.StatusCode == 429 {
 			k = ErrRateLimited
 		}
-		return "", nil, lerr(k, "whois service HTTP %d", resp.StatusCode)
+		return "", nil, string(body), lerr(k, "whois service HTTP %d", resp.StatusCode)
 	}
 	st, info, err := parseWhois(body)
 	if info != nil && source == "whois" {
 		info.Source = "whois"
 	}
-	return st, info, err
+	return st, info, string(body), err
 }
 
 // parseWhois maps an upstream answer to a status. Only an explicit
@@ -280,6 +286,17 @@ func parseWhois(body []byte) (string, *store.Info, error) {
 		raw = a.RDAPData
 	}
 	info.Raw = raw
+	if a.RDAPData != "" {
+		// registry snapshot time, used to discard answers from old copies
+		var r rdapDomain
+		if json.Unmarshal([]byte(a.RDAPData), &r) == nil {
+			for _, e := range r.Events {
+				if strings.HasPrefix(strings.ToLower(e.Action), "last update of rdap database") {
+					info.Snapshot = parseTime(&e.Date)
+				}
+			}
+		}
+	}
 	seen := map[string]bool{}
 	for _, n := range a.NameServers {
 		n = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(n)), ".")

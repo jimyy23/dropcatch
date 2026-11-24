@@ -31,6 +31,21 @@ type Manager struct {
 	extWhois   []*Whois // external sidecars, in configured order
 	web        map[string]Source
 	registrars []*RegistrarSource
+	twnic      *TWNIC // direct .tw registry source
+}
+
+// SetTWNIC sets the direct .tw registry source (nil disables it).
+func (m *Manager) SetTWNIC(t *TWNIC) {
+	m.mu.Lock()
+	m.twnic = t
+	m.mu.Unlock()
+}
+
+// TWNIC returns the direct .tw source, if enabled.
+func (m *Manager) TWNIC() *TWNIC {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.twnic
 }
 
 func NewManager(st *store.Store) *Manager { return &Manager{st: st, web: map[string]Source{}} }
@@ -40,6 +55,9 @@ func (m *Manager) whoisNames() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var out []string
+	if m.twnic != nil {
+		out = append(out, SrcTWNIC)
+	}
 	if m.whois != nil {
 		out = append(out, SrcWhois)
 	}
@@ -99,6 +117,9 @@ func (m *Manager) SourceNames() []string {
 	defer m.mu.RUnlock()
 	var out []string
 	if m.cfg.WhoisEnabled {
+		if m.twnic != nil {
+			out = append(out, SrcTWNIC)
+		}
 		if m.whois != nil {
 			out = append(out, SrcWhois)
 		}
@@ -122,6 +143,12 @@ func (m *Manager) SourceNames() []string {
 func (m *Manager) source(name string) Source {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if name == SrcTWNIC {
+		if m.twnic == nil {
+			return nil
+		}
+		return m.twnic
+	}
 	if name == SrcWhois {
 		if m.whois == nil {
 			return nil
@@ -156,6 +183,9 @@ func (m *Manager) Plan(suffix string) []string {
 	}
 	var cs []cand
 	for i, n := range names {
+		if n == SrcTWNIC && !IsTW(suffix) {
+			continue
+		}
 		h := m.st.Health(suffix, n)
 		if !h.Usable(now) {
 			continue
@@ -226,6 +256,19 @@ func (m *Manager) record(suffix string, o Observation) {
 	}
 }
 
+// stamp fills request timing when a source did not.
+func stamp(o *Observation, t0 time.Time) {
+	if o.Start.IsZero() {
+		o.Start = t0
+	}
+	if o.Elapsed == 0 {
+		o.Elapsed = time.Since(o.Start)
+	}
+	if o.Via == "" {
+		o.Via = "api"
+	}
+}
+
 func asLE(err error, out **LookupError) bool {
 	le, ok := err.(*LookupError)
 	if ok {
@@ -254,7 +297,9 @@ func (m *Manager) Check(ctx context.Context, d domainutil.Name, prio bool) Resul
 		if src == nil {
 			continue
 		}
+		t0 := time.Now()
 		o := src.Check(ctx, d, prio)
+		stamp(&o, t0)
 		m.record(d.Suffix, o)
 		res.Attempts = append(res.Attempts, o)
 		if o.Err == nil {
@@ -321,11 +366,16 @@ func (m *Manager) Confirm(ctx context.Context, d domainutil.Name, trigger *Obser
 			if !m.st.Health(d.Suffix, name).Usable(time.Now()) {
 				continue
 			}
+			if name == SrcTWNIC && !IsTW(d.Suffix) {
+				continue
+			}
 			src := m.source(name)
 			if src == nil {
 				continue
 			}
+			t0 := time.Now()
 			o := src.Check(ctx, d, true)
+			stamp(&o, t0)
 			m.record(d.Suffix, o)
 			c.add(o, false)
 			if o.Err == nil {
@@ -362,7 +412,9 @@ func (m *Manager) Confirm(ctx context.Context, d domainutil.Name, trigger *Obser
 			if src == nil {
 				continue
 			}
+			t0 := time.Now()
 			o = src.Check(ctx, d, true)
+			stamp(&o, t0)
 			m.record(d.Suffix, o)
 		}
 		c.add(o, fromTrigger)

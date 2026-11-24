@@ -27,3 +27,12 @@ networks, so the monitor uses RDAP first for `.tw` and WHOIS as fallback.
 
 dropcatch never uses the merged default mode (WHOIS + RDAP, where RDAP flags
 override WHOIS): it asks `whois=1` or `rdap=1` separately and uses one answer.
+
+## Note (2026-11-24): cache busting is not enough for TWNIC
+
+Percent-encoded URLs do reach the origin (`x-cache: MISS`), but the origin is a
+set of replicas holding different database snapshots ("last update of RDAP
+database" ranged from 30 min to 4 h old across requests at the same moment),
+and some URL forms get HTTP 429. dropcatch therefore no longer relies on the
+sidecar for `.tw`: it queries TWNIC directly (`internal/monitor/twnic.go`) and
+discards answers from older snapshots (`internal/engine/observe.go`).

@@ -97,6 +97,7 @@ func main() {
 			extWhois = append(extWhois, w)
 		}
 	}
+	twnic := monitor.NewTWNIC(6500 * time.Millisecond)
 	var regSources []*monitor.RegistrarSource
 	for _, r := range regs.Ready() {
 		regSources = append(regSources, monitor.NewRegistrarSource(r, 2*time.Second, 60))
@@ -114,6 +115,12 @@ func main() {
 			s.SetPerHour(settings.Int(st, "registrar_checks_per_hour"))
 		}
 		mon.SetExternalWhois(extWhois)
+		twnic.SetGap(time.Duration(settings.Int(st, "twnic_port43_gap_ms")) * time.Millisecond)
+		if settings.Bool(st, "twnic_direct") {
+			mon.SetTWNIC(twnic)
+		} else {
+			mon.SetTWNIC(nil)
+		}
 		mon.Configure(settings.MonitorConfig(st), whois, []monitor.Source{cloudean, regery}, regSources)
 	}
 	applyMonitor()

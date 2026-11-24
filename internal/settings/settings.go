@@ -40,6 +40,8 @@ var Defs = []Def{
 	{Group: "Engine", Key: "retention_days", Label: "History retention (days)", Default: "180", Kind: "int", Min: 7, Max: 3650},
 
 	{Group: "Monitor sources", Key: "whois_enabled", Label: "WHOIS/RDAP (primary)", Default: "1", Kind: "bool"},
+	{Group: "Monitor sources", Key: "twnic_direct", Label: "TWNIC direct (.tw)", Default: "1", Kind: "bool", Help: "Query the .tw registry directly (port-43 WHOIS, RDAP with snapshot times, live DNS zone) before the sidecar"},
+	{Group: "Monitor sources", Key: "twnic_port43_gap_ms", Label: "TWNIC port-43 gap (ms)", Default: "6500", Kind: "int", Min: 6000, Max: 60000, Help: "Shared by every .tw domain. Measured: 6 s is safe, 3-5 s gets this IP blocked for ~6 min"},
 	{Group: "Monitor sources", Key: "whois_gap_ms", Label: "WHOIS gap per suffix (ms)", Default: "2000", Kind: "int", Min: 0, Max: 60000, Help: "Registry WHOIS servers ban aggressive clients; armed domains jump the queue"},
 	{Group: "Monitor sources", Key: "whois_timeout_s", Label: "WHOIS request timeout (s)", Default: "40", Kind: "int", Min: 5, Max: 120},
 	{Group: "Monitor sources", Key: "fallback_order", Label: "Keyless fallbacks (order)", Default: "cloudean,regery", Kind: "text", Help: "Comma separated: cloudean, regery. Remove one to disable it"},
