@@ -39,13 +39,20 @@ func (s *RegistrarSource) SetPerHour(n int) {
 func (s *RegistrarSource) Name() string  { return "reg:" + s.R.Key() }
 func (s *RegistrarSource) Label() string { return s.R.Label() + " API" }
 
-func (s *RegistrarSource) budget() bool {
+// budget takes one check from the hourly budget. Routine monitoring may use
+// only half of it; the rest is kept for drop-catch, release watches and
+// confirmations (prio), so a busy hour never leaves those without checks.
+func (s *RegistrarSource) budget(prio bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if time.Since(s.window) > time.Hour {
 		s.window, s.used = time.Now(), 0
 	}
-	if s.used >= s.perHour {
+	limit := s.perHour
+	if !prio {
+		limit = max(1, s.perHour/2)
+	}
+	if s.used >= limit {
 		return false
 	}
 	s.used++
@@ -56,7 +63,7 @@ func (s *RegistrarSource) Check(ctx context.Context, d domainutil.Name, prio boo
 	start := time.Now()
 	o = Observation{Source: s.Name()}
 	defer func() { o.Elapsed = time.Since(start) }()
-	if !s.budget() {
+	if !s.budget(prio) {
 		o.Err = lerr(ErrBusy, "%s: hourly check budget used", s.R.Label())
 		return o
 	}

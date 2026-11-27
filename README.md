@@ -126,11 +126,22 @@ The fire time is set by hand (UTC), or computed from a suffix **release rule** a
 | Rule | Suffixes | When | Defaults |
 |---|---|---|---|
 | `.tw` (TWNIC) | `.tw` and all its second-level suffixes (`.com.tw`, `.net.tw`, `.org.tw`, `.idv.tw`, …) | 33rd day after the expiry **date in Taiwan time (UTC+8)**, at 06:00:00 UTC. Example: expiry 2026-10-27 00:00 UTC+8 → release 2026-11-29 06:00:00 UTC | lead 10 s, 5 min |
-| `.lu` (DNS-LU) | `.lu` | `ACTIVE (PENDING_DELETE)` for 29 days, then deleted in a **sweep on the End Date** (UTC day it entered pending delete + 29; ExpiredDomains' End Date): most names between 00:00 and ~01:00 UTC, some later in the morning, a few a day early. **No blind orders**: the registry is watched from End Date -1 day 23:00 to 12:00 UTC (every 60 s 00:00-06:00, else 2 min; `whois.dns.lu` is rate-limited, so `.lu` lookups are spaced ≥ 8 s) and orders start on the first "unregistered". Each drop is logged with its window ("DROP between … and …"). Computed only when the switch to pending delete was observed; otherwise enter the End Date 00:00 UTC by hand (a manual time is fired blind) | watch 00:00-12:00 |
+| `.lu` (DNS-LU) | `.lu` | **No fixed drop time.** A domain removed by its registrar spends 30 days in quarantine (WHOIS `ACTIVE (PENDING_DELETE)`), then is deleted one at a time in quarantine order. Nov 2026 samples: 9 drops between 03:51 and 20:16 UTC, 40 min to 16 h apart, one a day early. Estimate = observed quarantine entry + 30 days (else expiry + 30 days, an upper bound). **No blind orders**: watched from 1 day before to 1 day after the estimate, every 45 s alternating a registrar/web check (they saw drops 15-32 min before WHOIS) with WHOIS every 90 s; orders start on the first "available". Each drop is logged with its window | watch ±1 day |
 | `.ca` (CIRA TBR) | `.ca` | To-Be-Released session, **every Wednesday 19:00:00 UTC** year-round. The date comes from **CIRA's published TBR list** (`https://www.cira.ca/en/wp-json/cira/v1/domains/tbr`, fetched hourly while a `.ca` domain is tracked); a listed domain gets its fire time even before the monitor sees pending delete. For a domain not on the list yet, it is computed from when the domain turned pending delete (registry "updated" date, else first seen by the monitor): before Monday 07:00 UTC → that Wednesday; Monday 07:00 to Wednesday 19:00 → the following Wednesday. Sessions last up to ~60 min; leftovers reach general availability ~30 min later | lead 10 s, 90 min |
 
 When a domain becomes registered, the event log records the **registry creation time** and how long after it the
 monitor noticed.
+
+## Confirmation
+
+Orders never wait for confirmation: they start on the first plausible "available". Confirmation only gates the
+human notification. It needs WHOIS "available" plus one independent source, or (setting *Confirm by registrar
+agreement*, on by default) **two independent non-WHOIS sources including a registrar API** while WHOIS still
+shows pending delete/redemption. WHOIS lagged registrar checks by 15-32 minutes on `.lu`. A WHOIS "registered"
+always blocks. Unconfirmed signals are retried every 45 s (one `unconfirmed` event per episode, retries in the check
+history), and the monitor stops once availability is confirmed and drop-catch is not armed. Registrar APIs keep half
+of their hourly check budget for drop-catch, release watches and confirmations; an exhausted budget is a skipped
+check, not a failure.
 
 ## Notifications
 

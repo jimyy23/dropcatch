@@ -39,6 +39,9 @@ type ReleaseRule struct {
 	// Watch is the intensified polling around a release (nil: default
 	// window of 5 min before to 10 min after, every 2 s).
 	Watch func(release, now time.Time) (from, to time.Time, every time.Duration)
+	// WatchFast: each watch tick also asks one fast independent checker
+	// (web checker or registrar API, rotating), not only WHOIS.
+	WatchFast bool
 }
 
 // WatchWindow returns the intensified polling window around a release.
@@ -89,39 +92,38 @@ var ReleaseRules = []ReleaseRule{
 	{
 		Name:     ".lu (DNS-LU)",
 		Suffixes: []string{"lu"},
-		Note: "WHOIS shows ACTIVE (PENDING_DELETE) for 29 days, then the domain is deleted in a sweep on the End Date " +
-			"(= day it entered pending delete + 29, UTC; ExpiredDomains' End Date): most names go between 00:00 and ~01:00 UTC, " +
-			"some later in the morning, a few a day early. No blind orders: the registry is polled from End Date -1 day 23:00 to " +
-			"End Date 12:00 UTC (every 60 s 00:00-06:00, else every 2 min; whois.dns.lu is rate-limited) and orders start on " +
-			"the first 'unregistered'. The flip time is logged to narrow the window. Computed only when the switch to pending " +
-			"delete was observed; otherwise enter the End Date (00:00 UTC) as the fire time",
+		Note: "no fixed drop time. A domain removed by its registrar sits 30 days in quarantine (WHOIS: ACTIVE (PENDING_DELETE)), " +
+			"then is deleted one at a time in quarantine order. Nov 2026 samples: 9 drops between 03:51 and 20:16 UTC, 40 min to 16 h " +
+			"apart, none on a common minute; one a day early. Estimate = quarantine entry + 30 days (upper bound: expiry + 30 days). " +
+			"No blind orders: the domain is watched from 1 day before to 1 day after the estimate (WHOIS every 90 s, plus a " +
+			"registrar/web check every 45 s, which saw drops 15-32 min before WHOIS), and orders start on the first 'available'. " +
+			"Each drop is logged with its window. Computed only when the switch to pending delete was observed (else from the expiry " +
+			"date, as an upper bound)",
 		DefaultLead:     0,
-		DefaultDuration: 720,
+		DefaultDuration: 30,
 		Compute:         luRelease,
 		NoBlindFire:     true,
 		Watch: func(release, now time.Time) (time.Time, time.Time, time.Duration) {
-			from, to := release.Add(-time.Hour), release.Add(12*time.Hour)
-			every := 2 * time.Minute
-			if !now.Before(release) && now.Before(release.Add(6*time.Hour)) {
-				every = time.Minute
-			}
-			return from, to, every
+			return release.Add(-24 * time.Hour), release.Add(24 * time.Hour), 45 * time.Second
 		},
+		WatchFast: true,
 	},
 }
 
-// luRelease: End Date 00:00 UTC = the UTC day the domain turned pending
-// delete + 29 days. Needs an observed transition (a domain added while
-// already pending delete has an unknown start).
+// luRelease estimates the drop: quarantine entry (observed switch to
+// pending delete) + 30 days. Without an observed entry, the expiry + 30 days
+// is the upper bound (registrars must remove a domain before its expiry).
 func luRelease(in ReleaseInput) (time.Time, error) {
 	if !in.PendingDelete {
 		return time.Time{}, fmt.Errorf("not in pending delete yet")
 	}
-	if in.PendingDeleteSince.IsZero() || !in.PendingDeleteObserved {
-		return time.Time{}, fmt.Errorf("pending-delete start not observed (domain added while already pending delete): enter ExpiredDomains' End Date, 00:00 UTC, as the fire time")
+	if !in.PendingDeleteSince.IsZero() && in.PendingDeleteObserved {
+		return in.PendingDeleteSince.UTC().Add(30 * 24 * time.Hour).Truncate(time.Minute), nil
 	}
-	t := in.PendingDeleteSince.UTC()
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 29), nil
+	if !in.Expires.IsZero() {
+		return in.Expires.UTC().Add(30 * 24 * time.Hour).Truncate(time.Minute), nil
+	}
+	return time.Time{}, fmt.Errorf("quarantine entry not observed and no expiry date: enter the expected drop date as the fire time")
 }
 
 // RuleFor returns the release rule of a suffix.

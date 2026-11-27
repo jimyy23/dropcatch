@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -129,24 +130,26 @@ func TestGuardNeedsAgreement(t *testing.T) {
 
 func TestReleaseLU(t *testing.T) {
 	r, ok := RuleFor("lu")
-	if !ok || !r.NoBlindFire {
-		t.Fatal(".lu rule must exist and not fire blind")
+	if !ok || !r.NoBlindFire || !r.WatchFast {
+		t.Fatal(".lu rule must exist, not fire blind, and watch with fast checkers")
 	}
-	// entered pending delete 2026-10-26 (any time, UTC) -> End Date 2026-11-24
-	at, err := ExpectedRelease(ReleaseInput{Suffix: "lu", PendingDelete: true, PendingDeleteSince: ts("2026-10-26T13:20:00Z"), PendingDeleteObserved: true})
-	if err != nil || !at.Equal(ts("2026-11-24T00:00:00Z")) {
+	// quarantine entered 2026-10-26 13:20 UTC (observed) -> estimate +30 days
+	at, err := ExpectedRelease(ReleaseInput{Suffix: "lu", PendingDelete: true, PendingDeleteSince: ts("2026-10-26T13:20:37Z"), PendingDeleteObserved: true})
+	if err != nil || !at.Equal(ts("2026-11-25T13:20:00Z")) {
 		t.Fatalf("%s %v", at, err)
 	}
-	if _, err := ExpectedRelease(ReleaseInput{Suffix: "lu", PendingDelete: true, PendingDeleteSince: ts("2026-10-26T13:20:00Z")}); err == nil {
-		t.Fatal("unobserved start must not be guessed")
+	// not observed: expiry + 30 days is the upper bound
+	at, err = ExpectedRelease(ReleaseInput{Suffix: "lu", PendingDelete: true, PendingDeleteSince: ts("2026-10-26T13:20:00Z"), Expires: ts("2026-10-30T08:00:00Z")})
+	if err != nil || !at.Equal(ts("2026-11-29T08:00:00Z")) {
+		t.Fatalf("expiry bound: %s %v", at, err)
 	}
-	rel := ts("2026-11-24T00:00:00Z")
-	from, to, every := r.WatchWindow(rel, ts("2026-11-24T01:00:00Z"))
-	if !from.Equal(ts("2026-11-23T23:00:00Z")) || !to.Equal(ts("2026-11-24T12:00:00Z")) || every != time.Minute {
+	if _, err := ExpectedRelease(ReleaseInput{Suffix: "lu", PendingDelete: true}); err == nil {
+		t.Fatal("no data: no estimate")
+	}
+	rel := ts("2026-11-25T13:20:00Z")
+	from, to, every := r.WatchWindow(rel, rel)
+	if !from.Equal(rel.Add(-24*time.Hour)) || !to.Equal(rel.Add(24*time.Hour)) || every != 45*time.Second {
 		t.Fatalf("window %s %s %s", from, to, every)
-	}
-	if _, _, every := r.WatchWindow(rel, ts("2026-11-24T08:00:00Z")); every != 2*time.Minute {
-		t.Fatalf("late interval %s", every)
 	}
 }
 
@@ -154,13 +157,13 @@ func TestLUNoBlindFireButWatch(t *testing.T) {
 	e, st, _, id := setup(t) // setup uses foobar123.lu
 	at := time.Now().Add(30 * time.Minute)
 	st.UpdateDomainSettings(id, store.DomainSettings{MonitorEnabled: true, MonitorInterval: 3600, CatchEnabled: true, CatchInterval: 60,
-		CatchDuration: 1, CatchRegistrars: []string{"a"}, FireAt: at, FireAuto: true, FireLead: 0, FireDuration: 720})
+		CatchDuration: 1, CatchRegistrars: []string{"a"}, FireAt: at, FireAuto: true, FireLead: 0, FireDuration: 30})
 	d, _ := st.GetDomain(id)
 	if _, ok := e.fireDue(d, time.Now()); ok {
 		t.Fatal(".lu computed window must not fire blind")
 	}
 	if _, watching, _ := e.watchWindow(d, time.Now()); !watching {
-		t.Fatal("must watch from release -1h")
+		t.Fatal("must watch from a day before the estimate")
 	}
 	// a manual fire time is still honoured
 	st.UpdateDomainSettings(id, store.DomainSettings{MonitorEnabled: true, MonitorInterval: 3600, CatchEnabled: true, CatchInterval: 60,
@@ -277,5 +280,103 @@ func TestDropWindowLogged(t *testing.T) {
 	want := "DROP between " + pd.Start.UTC().Format("2006-01-02 15:04:05") + " (last pending_delete answer)"
 	if !strings.Contains(got, want) || !strings.Contains(got, "vs expected release") {
 		t.Fatalf("%s\nwant %s", got, want)
+	}
+}
+
+// fake registrar that also answers availability checks (monitor source)
+type availReg struct {
+	reg
+	avail atomic.Bool
+}
+
+func (r *availReg) Check(context.Context, string) (registrar.Availability, error) {
+	return registrar.Availability{Available: r.avail.Load()}, nil
+}
+
+// .lu drop: the registrar check sees it free while WHOIS still shows pending
+// delete. Orders start on the first signal; availability is confirmed by
+// cloudean + the registrar within seconds, not after WHOIS catches up.
+func TestLUDropRegistrarFirst(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "lu.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	whois := &fakeTW{}
+	pd := monitor.Observation{Source: monitor.SrcWhois, Status: store.StatusPendingDelete, Info: &store.Info{PendingDelete: true}}
+	whois.set(pd)
+	web := &src{status: store.StatusPendingDelete} // cloudean
+	nt := &availReg{reg: reg{key: "netim"}}
+	mon := monitor.NewManager(st)
+	mon.Configure(monitor.Config{Fallbacks: []string{monitor.SrcCloudean}, RegistrarMonitors: true}, nil,
+		[]monitor.Source{web}, []*monitor.RegistrarSource{monitor.NewRegistrarSource(nt, time.Millisecond, 1000)})
+	_ = whois
+	e := New(st, mon, registrar.NewSet(nt), notify.New(config.Twilio{}, config.Telegram{}), pricing.New(st, time.Hour), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e.SetConfig(Config{MinMonitorInterval: time.Second, MinCatchInterval: 50 * time.Millisecond, OrderGap: 20 * time.Millisecond,
+		ConfirmCooldown: 15 * time.Minute, ConfirmRetry: time.Second, RegistrarConfirm: true})
+	id, _ := st.AddDomain(store.NewDomain{Name: "cag.lu", UName: "cag.lu", Suffix: "lu", MonitorEnabled: true, MonitorInterval: 3600, CatchInterval: 60, CatchDuration: 1})
+	st.SaveObservation(id, store.StatusPendingDelete, "whois", "", &store.Info{PendingDelete: true})
+	rel := time.Now().Add(time.Hour)
+	// armed interval 1 s (the user's own setting is the floor; the .lu watch
+	// tick of 45 s only applies when it is faster)
+	st.UpdateDomainSettings(id, store.DomainSettings{MonitorEnabled: true, MonitorInterval: 3600, CatchEnabled: true, CatchInterval: 1,
+		CatchDuration: 1, CatchRegistrars: []string{"netim"}, FireAt: rel, FireAuto: true, FireDuration: 30})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.Run(ctx)
+	time.Sleep(1500 * time.Millisecond)
+	if nt.calls.Load() != 0 {
+		t.Fatal("no orders before the drop")
+	}
+	// the drop: registrar API and cloudean see it, WHOIS would still lag
+	dropAt := time.Now()
+	nt.avail.Store(true)
+	web.set(store.StatusAvailable)
+	deadline := time.Now().Add(20 * time.Second)
+	var d *store.Domain
+	for time.Now().Before(deadline) {
+		d, _ = st.GetDomain(id)
+		if !d.ConfirmedAvailAt.IsZero() && nt.calls.Load() > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if nt.calls.Load() == 0 {
+		for _, c := range st.ListChecks(id, 30) {
+			t.Logf("check %s %s %s %s", c.TS.Format("15:04:05"), c.Purpose, c.Source, c.Result+" "+c.Detail)
+		}
+		evs, _ := st.ListEvents(id, "", 30, 0)
+		for _, x := range evs {
+			t.Logf("event %s %s", x.Type, x.Detail)
+		}
+		dd, _ := st.GetDomain(id)
+		t.Logf("status %s cand %s/%d catch %s fire %s", dd.Status, dd.CandStatus, dd.CandCount, dd.CatchState, dd.FireAt)
+		t.Fatal("orders must start on the registrar signal")
+	}
+	if d.ConfirmedAvailAt.IsZero() {
+		for _, c := range st.ListChecks(id, 40) {
+			t.Logf("check %s %s %s %s", c.TS.Format("15:04:05"), c.Purpose, c.Source, c.Result+" "+c.Detail)
+		}
+		evs, _ := st.ListEvents(id, "", 30, 0)
+		for _, x := range evs {
+			t.Logf("event %s %s", x.Type, x.Detail)
+		}
+		t.Logf("status %s cand %s catch %s", d.Status, d.CandStatus, d.CatchState)
+	}
+	if d.ConfirmedAvailAt.IsZero() || d.ConfirmedAvailAt.Sub(dropAt) > 10*time.Second {
+		t.Fatalf("confirmation %s after the drop (want seconds)", d.ConfirmedAvailAt.Sub(dropAt))
+	}
+	if !strings.Contains(d.ConfirmDetail, "reg:netim=available") {
+		t.Fatalf("confirmed by %q", d.ConfirmDetail)
+	}
+	ev, _ := st.ListEvents(id, "", 100, 0)
+	unconf := 0
+	for _, x := range ev {
+		if x.Type == "unconfirmed" {
+			unconf++
+		}
+	}
+	if unconf > 1 {
+		t.Fatalf("%d unconfirmed events, want at most one per episode", unconf)
 	}
 }

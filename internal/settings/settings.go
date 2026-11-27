@@ -34,7 +34,10 @@ var Defs = []Def{
 	{Group: "Engine", Key: "min_catch_interval", Label: "Minimum armed interval (s)", Default: "1", Kind: "int", Min: 1, Max: 600, Help: "Floor applied to every domain's armed interval. Default 1 s, so each domain's own armed interval applies; each source still keeps its own rate limits (WHOIS gap per suffix, Regery budget)"},
 	{Group: "Engine", Key: "order_gap_ms", Label: "Gap between orders per registrar (ms)", Default: "1500", Kind: "int", Min: 200, Max: 60000, Help: "Each registrar also enforces its own documented minimum (≥1 s)"},
 	{Group: "Engine", Key: "error_backoff_max", Label: "Max back-off when every source fails (s)", Default: "1800", Kind: "int", Min: 60, Max: 86400},
-	{Group: "Engine", Key: "confirm_cooldown", Label: "Re-confirm unconfirmed signals after (s)", Default: "900", Kind: "int", Min: 30, Max: 86400, Help: "Flapping WHOIS answers are cross-checked at most this often"},
+	{Group: "Engine", Key: "confirm_cooldown", Label: "Re-confirm unconfirmed signals after (s)", Default: "900", Kind: "int", Min: 30, Max: 86400, Help: "Older availability signals (more than a day, not armed) are cross-checked at most this often"},
+	{Group: "Engine", Key: "registrar_confirm", Label: "Confirm by registrar agreement", Default: "1", Kind: "bool", Help: "Two independent checks (at least one a registrar API, e.g. Cloudean + Netim) confirm availability while WHOIS still shows pending delete/redemption. Observed on .lu: WHOIS lagged registrar checks by 15-32 min. A WHOIS 'registered' always blocks"},
+	{Group: "Engine", Key: "confirm_retry", Label: "Retry unconfirmed signals every (s)", Default: "45", Kind: "int", Min: 15, Max: 3600, Help: "While a fresh available signal is unconfirmed (or the domain is armed), the cross-check and the monitor repeat this often"},
+	{Group: "Engine", Key: "stop_when_confirmed", Label: "Stop monitoring once confirmed available", Default: "1", Kind: "bool", Help: "Switches the domain's monitor off after confirmed availability when drop-catch is not armed"},
 	{Group: "Engine", Key: "allow_no_whois_confirm", Label: "Confirm without WHOIS", Default: "0", Kind: "bool", Help: "When WHOIS cannot answer for a suffix, allow two independent fallback sources to confirm instead"},
 	{Group: "Engine", Key: "notify_on_catch", Label: "Notify on catch result", Default: "1", Kind: "bool", Help: "Also notify (per-domain channels) when a drop-catch is won, pending or lost"},
 	{Group: "Engine", Key: "retention_days", Label: "History retention (days)", Default: "180", Kind: "int", Min: 7, Max: 3650},
@@ -126,6 +129,9 @@ func EngineConfig(st *store.Store) engine.Config {
 		ErrorBackoffMax:     Secs(st, "error_backoff_max"),
 		NotifyOnCatch:       Bool(st, "notify_on_catch"),
 		AllowNoWhoisConfirm: Bool(st, "allow_no_whois_confirm"),
+		RegistrarConfirm:    Bool(st, "registrar_confirm"),
+		ConfirmRetry:        Secs(st, "confirm_retry"),
+		StopWhenConfirmed:   Bool(st, "stop_when_confirmed"),
 		RetentionDays:       Int(st, "retention_days"),
 	}
 }

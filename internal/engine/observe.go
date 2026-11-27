@@ -178,7 +178,9 @@ func (e *Engine) statusEvent(d *store.Domain, prev string, o monitor.Observation
 	detail := fmt.Sprintf("%s → %s (via %s; first seen %s UTC)", prev, o.Status, via, firstSeen.UTC().Format("15:04:05.000"))
 	if prev == store.StatusUnknown || prev == "" {
 		// first check after adding: no detection timing to report
-	} else if o.Status == store.StatusRegistered && o.Info != nil && !o.Info.Created.IsZero() && o.Info.Created.After(now().Add(-48*time.Hour)) {
+	} else if o.Status == store.StatusRegistered && o.Info != nil && !o.Info.Created.IsZero() &&
+		(o.Info.Created.After(now().Add(-48*time.Hour)) || prev == store.StatusPendingDelete || prev == store.StatusRedemption || prev == store.StatusAvailable) &&
+		(d.Created.IsZero() || o.Info.Created.After(d.Created)) {
 		// a fresh registration: how long after the registry event we saw it
 		detail += fmt.Sprintf("; registry creation %s UTC, detected %s after", o.Info.Created.UTC().Format("2006-01-02 15:04:05"),
 			firstSeen.Sub(o.Info.Created).Round(100*time.Millisecond))

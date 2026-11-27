@@ -311,11 +311,43 @@ func (m *Manager) Check(ctx context.Context, d domainutil.Name, prio bool) Resul
 		}
 	}
 	var msgs []string
+	allBusy := len(res.Attempts) > 0
 	for _, a := range res.Attempts {
 		msgs = append(msgs, a.Source+": "+a.Err.Error())
+		if KindOf(a.Err) != ErrBusy {
+			allBusy = false
+		}
 	}
-	res.Obs = Observation{Err: lerr(ErrTransient, "%s", strings.Join(msgs, " | "))}
+	kind := ErrTransient
+	if allBusy {
+		kind = ErrBusy // only local budgets/queues: skipped, not failing
+	}
+	res.Obs = Observation{Err: lerr(kind, "%s", strings.Join(msgs, " | "))}
 	return res
+}
+
+// CheckSource asks one named source (health recorded). Used by release
+// watches to add a fast independent checker to the WHOIS answer.
+func (m *Manager) CheckSource(ctx context.Context, name string, d domainutil.Name, prio bool) (Observation, bool) {
+	if !m.st.Health(d.Suffix, name).Usable(time.Now()) {
+		return Observation{}, false
+	}
+	src := m.source(name)
+	if src == nil {
+		return Observation{}, false
+	}
+	t0 := time.Now()
+	o := src.Check(ctx, d, prio)
+	stamp(&o, t0)
+	m.record(d.Suffix, o)
+	return o, true
+}
+
+// Fallbacks returns the configured keyless web checkers in order.
+func (m *Manager) Fallbacks() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]string(nil), m.cfg.Fallbacks...)
 }
 
 // Confirmation is the outcome of a cross-check.
@@ -326,6 +358,11 @@ type Confirmation struct {
 	Observations   []Observation
 	FromTrigger    []bool // Observations[i] is the trigger itself (not a new lookup)
 	Confirmed      bool
+	ByRegistrars   bool // confirmed by independent sources while WHOIS lagged
+}
+
+func deletionCycle(st string) bool {
+	return st == store.StatusPendingDelete || st == store.StatusRedemption
 }
 
 func (c *Confirmation) add(o Observation, trigger bool) {
@@ -351,7 +388,7 @@ func (c Confirmation) Summary() string {
 // supports the suffix (Cloudean, Regery or a registrar API) agreeing. When
 // allowWithoutWhois is set and WHOIS cannot answer for the suffix, two
 // independent sources must agree instead.
-func (m *Manager) Confirm(ctx context.Context, d domainutil.Name, trigger *Observation, allowWithoutWhois bool) Confirmation {
+func (m *Manager) Confirm(ctx context.Context, d domainutil.Name, trigger *Observation, allowWithoutWhois, registrarAgreement bool) Confirmation {
 	var c Confirmation
 	var whoisObs *Observation
 	m.mu.RLock()
@@ -387,8 +424,14 @@ func (m *Manager) Confirm(ctx context.Context, d domainutil.Name, trigger *Obser
 	if whoisObs != nil {
 		c.WhoisChecked = whoisObs.Err == nil
 		c.WhoisAvail = whoisObs.Available()
-		if c.WhoisChecked && !c.WhoisAvail {
-			return c // WHOIS positively says not available: no confirmation
+		// WHOIS lagging the registry: observed on .lu, registrar checks saw
+		// deleted names free 15-32 min before WHOIS stopped showing
+		// pending delete. With registrarAgreement, two independent
+		// non-WHOIS sources (at least one a registrar API) can confirm
+		// against a WHOIS that still shows the deletion cycle; a WHOIS
+		// "registered" (someone owns it) still vetoes.
+		if c.WhoisChecked && !c.WhoisAvail && !(registrarAgreement && deletionCycle(whoisObs.Status)) {
+			return c
 		}
 	}
 	m.mu.RLock()
@@ -398,7 +441,7 @@ func (m *Manager) Confirm(ctx context.Context, d domainutil.Name, trigger *Obser
 		secondaries = append(secondaries, r.Name())
 	}
 	m.mu.RUnlock()
-	agree := 0
+	agree, regAgree := 0, 0
 	for _, name := range secondaries {
 		if !m.st.Health(d.Suffix, name).Usable(time.Now()) {
 			continue
@@ -420,16 +463,26 @@ func (m *Manager) Confirm(ctx context.Context, d domainutil.Name, trigger *Obser
 		c.add(o, fromTrigger)
 		if o.Available() {
 			agree++
+			if strings.HasPrefix(name, "reg:") {
+				regAgree++
+			}
 			if c.SecondaryAvail == "" {
 				c.SecondaryAvail = name
 			}
-			if c.WhoisAvail || (allowWithoutWhois && !c.WhoisChecked && agree >= 2) {
+			if c.WhoisAvail || (allowWithoutWhois && !c.WhoisChecked && agree >= 2) || (registrarAgreement && agree >= 2 && regAgree >= 1) {
 				break
 			}
 		}
 		// a disagreeing or failing source: keep asking the next one
 	}
-	c.Confirmed = (c.WhoisAvail && agree >= 1) || (allowWithoutWhois && !c.WhoisChecked && agree >= 2)
+	switch {
+	case c.WhoisAvail && agree >= 1:
+		c.Confirmed = true
+	case allowWithoutWhois && !c.WhoisChecked && agree >= 2:
+		c.Confirmed = true
+	case registrarAgreement && agree >= 2 && regAgree >= 1:
+		c.Confirmed, c.ByRegistrars = true, true
+	}
 	return c
 }
 

@@ -250,6 +250,13 @@ func (e *Engine) runSessionUntil(parent context.Context, w *worker, d *store.Dom
 			// the guard keeps old copies from ending the session; the
 			// status in force (not the raw answer) decides
 			o.Status = e.observe(prev, o, "catch").Status
+			if o.Status == store.StatusAvailable {
+				// keep cross-checking while ordering (notification); it
+				// rate-limits itself by the confirm retry interval
+				if cur, err := e.st.GetDomain(d.ID); err == nil && cur.ConfirmedAvailAt.IsZero() {
+					go e.maybeConfirm(parent, w, cur, name, o)
+				}
+			}
 			if o.Status == store.StatusAvailable || o.Status == store.StatusPendingDelete || o.Status == store.StatusRedemption {
 				regSeen = 0
 				continue
@@ -352,12 +359,12 @@ func (e *Engine) maybeConfirm(ctx context.Context, w *worker, d *store.Domain, n
 	}
 	defer confirming.Delete(d.ID)
 	cfg := e.config()
-	if !d.ConfirmTriedAt.IsZero() && time.Since(d.ConfirmTriedAt) < cfg.ConfirmCooldown {
+	if !d.ConfirmTriedAt.IsZero() && time.Since(d.ConfirmTriedAt) < confirmRetry(cfg, d) {
 		return
 	}
 	cctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
-	c := e.mon.Confirm(cctx, name, &trigger, cfg.AllowNoWhoisConfirm)
+	c := e.mon.Confirm(cctx, name, &trigger, cfg.AllowNoWhoisConfirm, cfg.RegistrarConfirm)
 	for i, o := range c.Observations {
 		if c.FromTrigger[i] {
 			continue // the trigger is already in the history
@@ -370,12 +377,24 @@ func (e *Engine) maybeConfirm(ctx context.Context, w *worker, d *store.Domain, n
 	}
 	summary := c.Summary()
 	if !c.Confirmed {
+		// one event per episode; the retries go to the check history
+		if d.ConfirmTriedAt.IsZero() || d.ConfirmTriedAt.Before(d.StatusSince) {
+			e.st.AddEvent(d.ID, "unconfirmed", "info", fmt.Sprintf("available signal not confirmed yet (retrying every %s): %s", confirmRetry(cfg, d), summary))
+		}
 		e.st.SetConfirmTried(d.ID, summary)
-		e.st.AddEvent(d.ID, "unconfirmed", "info", "available signal not confirmed: "+summary)
 		return
 	}
 	e.st.SetConfirmed(d.ID, time.Now(), summary)
-	e.st.AddEvent(d.ID, "confirmed_available", "alert", "availability confirmed: "+summary)
+	first := trigger.Start
+	if first.IsZero() {
+		first = time.Now()
+	}
+	how := ""
+	if c.ByRegistrars {
+		how = " (registrar checks agree; WHOIS still shows the deletion cycle)"
+	}
+	e.st.AddEvent(d.ID, "confirmed_available", "alert", fmt.Sprintf("availability confirmed%s %s after the first signal: %s",
+		how, time.Since(first).Round(time.Second), summary))
 	cur, err := e.st.GetDomain(d.ID)
 	if err != nil {
 		return
@@ -383,8 +402,28 @@ func (e *Engine) maybeConfirm(ctx context.Context, w *worker, d *store.Domain, n
 	catch := "drop-catch is OFF"
 	if cur.Armed(time.Now()) {
 		catch = "drop-catch is running with " + strings.Join(cur.CatchRegistrars, ", ")
+	} else if cfg.StopWhenConfirmed && cur.MonitorEnabled && cur.CatchState != store.CatchActive {
+		// nothing left to watch: an idle monitor on a free name only adds
+		// load and stray errors
+		e.st.SetToggle(cur.ID, "monitor", false)
+		e.st.AddEvent(cur.ID, "monitor_stopped", "info", "monitoring switched off: availability confirmed and drop-catch is not armed")
+		catch += "; monitoring stopped"
 	}
 	e.notifyDomain(context.Background(), cur, fmt.Sprintf("Domain %s is now AVAILABLE (confirmed by %s). %s.", cur.UName, summary, catch), true)
+}
+
+// confirmRetry is how soon an unconfirmed availability signal is
+// cross-checked again: ConfirmRetry (default 45 s) while the domain is in
+// drop-catch or within a day of the signal, else the long cooldown.
+func confirmRetry(cfg Config, d *store.Domain) time.Duration {
+	r := cfg.ConfirmRetry
+	if r <= 0 {
+		r = 45 * time.Second
+	}
+	if d.Armed(time.Now()) || time.Since(d.StatusSince) < 24*time.Hour || d.CandStatus == store.StatusAvailable {
+		return r
+	}
+	return max(r, cfg.ConfirmCooldown)
 }
 
 // notifyDomain sends through the channels enabled for the domain.

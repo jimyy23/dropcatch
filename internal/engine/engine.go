@@ -29,6 +29,9 @@ type Config struct {
 	ErrorBackoffMax     time.Duration
 	NotifyOnCatch       bool // also notify on order success / loss
 	AllowNoWhoisConfirm bool
+	RegistrarConfirm    bool          // two independent sources incl. a registrar API confirm while WHOIS shows the deletion cycle
+	ConfirmRetry        time.Duration // retry spacing while an available signal is unconfirmed
+	StopWhenConfirmed   bool          // switch the monitor off once availability is confirmed and nothing is armed
 	RetentionDays       int
 }
 
@@ -237,6 +240,11 @@ func (e *Engine) loop(ctx context.Context, w *worker) {
 			}
 		}
 		active := d.MonitorEnabled || armed
+		if active && d.ConfirmedAvailAt.IsZero() && (d.Status == store.StatusAvailable || d.CandStatus == store.StatusAvailable) {
+			if r := confirmRetry(cfg, d); r < interval {
+				interval = r // unconfirmed availability: re-check soon
+			}
+		}
 		watchFrom, watching, every := e.watchWindow(d, now)
 		if watching && active && every < interval {
 			interval = every
@@ -405,6 +413,12 @@ func (e *Engine) checkOnce(ctx context.Context, w *worker, d *store.Domain, arme
 	}
 	o := res.Obs
 	if o.Err != nil {
+		if monitor.KindOf(o.Err) == monitor.ErrBusy {
+			// only local budgets were exhausted (e.g. a registrar's hourly
+			// check budget): nothing failed, try again at the next interval
+			e.st.Touch(d.ID)
+			return
+		}
 		e.st.SaveObservation(d.ID, "", "", o.Err.Error(), nil)
 		if d.ErrorStreak+1 == 3 {
 			e.st.AddEvent(d.ID, "monitor_failing", "warn", "all sources failing: "+o.Err.Error())

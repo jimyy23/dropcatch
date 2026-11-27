@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sync"
 	"time"
 
 	"dropcatch/internal/domainutil"
@@ -135,6 +137,10 @@ func (e *Engine) watchWindow(d *store.Domain, now time.Time) (time.Time, bool, t
 // (delegation = registered), plus RDAP every 30 s. Other suffixes use the
 // normal source plan.
 func (e *Engine) watchCheck(ctx context.Context, w *worker, d *store.Domain, armed bool) {
+	if r, ok := RuleFor(d.Suffix); ok && r.WatchFast {
+		e.watchFast(ctx, w, d, armed)
+		return
+	}
 	tw := e.mon.TWNIC()
 	if !monitor.IsTW(d.Suffix) || tw == nil {
 		e.checkOnce(ctx, w, d, armed)
@@ -194,4 +200,81 @@ func (e *Engine) fireWatch(ctx context.Context, cancel context.CancelCauseFunc, 
 			return
 		}
 	}
+}
+
+var (
+	watchMu     sync.Mutex
+	watchWhois  = map[int64]time.Time{} // last WHOIS ask per domain in a fast watch
+	watchRotate = map[int64]int{}
+)
+
+// watchFast is one tick of a release window without a fixed time (.lu):
+// one fast independent checker per tick (rotating over the web checkers
+// and registrar APIs, which saw .lu drops 15-32 min before WHOIS), plus
+// the normal WHOIS-first check at most every 90 s (registry rate limits).
+// Orders start on the first plausible "available" from any of them.
+func (e *Engine) watchFast(ctx context.Context, w *worker, d *store.Domain, armed bool) {
+	name, err := domainutil.Parse(d.Name)
+	if err != nil {
+		return
+	}
+	watchMu.Lock()
+	whoisDue := time.Since(watchWhois[d.ID]) >= 90*time.Second
+	if whoisDue {
+		watchWhois[d.ID] = time.Now()
+	}
+	i := watchRotate[d.ID]
+	watchRotate[d.ID] = i + 1
+	watchMu.Unlock()
+
+	var fast []string
+	fast = append(fast, e.mon.Fallbacks()...)
+	for _, k := range d.CatchRegistrars {
+		fast = append(fast, "reg:"+k)
+	}
+	for _, r := range e.regs.Ready() {
+		n := "reg:" + r.Key()
+		if !slices.Contains(fast, n) {
+			fast = append(fast, n)
+		}
+	}
+	cctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	for k := 0; k < len(fast); k++ {
+		o, ok := e.mon.CheckSource(cctx, fast[(i+k)%len(fast)], name, true)
+		if !ok {
+			continue // benched/unsupported: try the next one this tick
+		}
+		e.st.AddCheck(d.ID, checkOf("watch", o))
+		if o.Err != nil {
+			e.logPoll(d.ID, "watch", o, "error")
+			if monitor.KindOf(o.Err) == monitor.ErrBusy || monitor.KindOf(o.Err) == monitor.ErrUnsupported {
+				continue
+			}
+			break
+		}
+		cur, err := e.st.GetDomain(d.ID)
+		if err != nil {
+			return
+		}
+		e.apply(ctx, w, cur, name, o, cur.Armed(time.Now()) && cur.CatchState != store.CatchWon, "watch")
+		break
+	}
+	if whoisDue {
+		cur, err := e.st.GetDomain(d.ID)
+		if err != nil {
+			return
+		}
+		e.checkOnce(ctx, w, cur, cur.Armed(time.Now()) && cur.CatchState != store.CatchWon)
+		return
+	}
+	e.st.Touch(d.ID)
+}
+
+func checkOf(purpose string, o monitor.Observation) store.Check {
+	c := store.Check{Purpose: purpose, Source: o.Source, MS: o.Elapsed.Milliseconds(), Detail: o.Detail, Result: o.Status}
+	if o.Err != nil {
+		c.Result, c.Detail = "error", monitor.KindOf(o.Err).String()+": "+o.Err.Error()
+	}
+	return c
 }

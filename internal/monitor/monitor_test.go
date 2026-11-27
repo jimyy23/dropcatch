@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dropcatch/internal/domainutil"
+	"dropcatch/internal/registrar"
 	"dropcatch/internal/store"
 )
 
@@ -202,13 +203,13 @@ func TestConfirmRule(t *testing.T) {
 	d, _ := domainutil.Parse("foobar123.lu")
 
 	whoisAvail := Observation{Source: SrcWhois, Status: store.StatusAvailable}
-	c := m.Confirm(context.Background(), d, &whoisAvail, false)
+	c := m.Confirm(context.Background(), d, &whoisAvail, false, false)
 	if !c.Confirmed || c.SecondaryAvail != SrcRegery {
 		t.Fatalf("whois avail + regery avail should confirm: %+v", c)
 	}
 
 	rg.status = store.StatusRegistered
-	c = m.Confirm(context.Background(), d, &whoisAvail, false)
+	c = m.Confirm(context.Background(), d, &whoisAvail, false, false)
 	if c.Confirmed {
 		t.Fatal("no secondary agreement must not confirm")
 	}
@@ -216,10 +217,10 @@ func TestConfirmRule(t *testing.T) {
 	// a fallback signal alone (no WHOIS configured) never confirms by default
 	rg.status, cl.status = store.StatusAvailable, store.StatusAvailable
 	fb := Observation{Source: SrcCloudean, Status: store.StatusAvailable}
-	if c = m.Confirm(context.Background(), d, &fb, false); c.Confirmed {
+	if c = m.Confirm(context.Background(), d, &fb, false, false); c.Confirmed {
 		t.Fatal("without WHOIS, confirmation needs the opt-in")
 	}
-	if c = m.Confirm(context.Background(), d, &fb, true); !c.Confirmed {
+	if c = m.Confirm(context.Background(), d, &fb, true, false); !c.Confirmed {
 		t.Fatalf("opt-in: two fallbacks agreeing should confirm: %s", c.Summary())
 	}
 
@@ -227,7 +228,7 @@ func TestConfirmRule(t *testing.T) {
 	rg.kind, cl.kind = ErrUnsupported, ErrUnsupported
 	st.ClearHealth("lu", SrcCloudean)
 	st.ClearHealth("lu", SrcRegery)
-	if c = m.Confirm(context.Background(), d, &whoisAvail, false); c.Confirmed {
+	if c = m.Confirm(context.Background(), d, &whoisAvail, false, false); c.Confirmed {
 		t.Fatal("unsupported sources must not confirm")
 	}
 }
@@ -282,7 +283,7 @@ func TestExternalWhoisFallbackOrder(t *testing.T) {
 	// confirmation can use an external sidecar's WHOIS answer
 	ext := Observation{Source: res.Obs.Source, Status: store.StatusAvailable}
 	cl.status = store.StatusAvailable
-	if c := m.Confirm(context.Background(), d, &ext, false); !c.Confirmed {
+	if c := m.Confirm(context.Background(), d, &ext, false, false); !c.Confirmed {
 		t.Fatalf("external WHOIS + Cloudean should confirm: %s", c.Summary())
 	}
 }
@@ -320,5 +321,56 @@ func TestWhoisSourceOrder(t *testing.T) {
 	o = w.Check(context.Background(), d, true)
 	if o.Err != nil || len(got) != 2 || got[0] != "whois" || got[1] != "rdap" {
 		t.Fatalf(".com: WHOIS first, RDAP when WHOIS fails: %v %+v", got, o)
+	}
+}
+
+// fake registrar availability API
+type fakeAPI struct {
+	key   string
+	avail bool
+}
+
+func (f *fakeAPI) Key() string                                       { return f.key }
+func (f *fakeAPI) Label() string                                     { return f.key }
+func (f *fakeAPI) PriceKey() string                                  { return f.key }
+func (f *fakeAPI) Configured() bool                                  { return true }
+func (f *fakeAPI) Problem() string                                   { return "" }
+func (f *fakeAPI) MinGap() time.Duration                             { return time.Millisecond }
+func (f *fakeAPI) Register(context.Context, string) registrar.Result { return registrar.Result{} }
+func (f *fakeAPI) Check(context.Context, string) (registrar.Availability, error) {
+	return registrar.Availability{Available: f.avail}, nil
+}
+
+// .lu: WHOIS still shows pending delete while registrars see the name free.
+func TestConfirmByRegistrarsWhileWhoisLags(t *testing.T) {
+	whoisAnswer := `{"code":0,"msg":"ok","data":{"registered":true,"pendingDelete":true,"status":[{"text":"Pending Delete"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, whoisAnswer) }))
+	defer srv.Close()
+	st := newTestStore(t)
+	m := NewManager(st)
+	cl := &fakeSource{name: SrcCloudean, status: store.StatusAvailable}
+	rg := &fakeSource{name: SrcRegery, status: store.StatusRegistered}
+	nt := &fakeAPI{key: "netim", avail: true}
+	m.Configure(Config{WhoisEnabled: true, Fallbacks: []string{SrcCloudean, SrcRegery}}, NewWhois(srv.URL, "", 5*time.Second, 0),
+		[]Source{cl, rg}, []*RegistrarSource{NewRegistrarSource(nt, time.Millisecond, 100)})
+	d, _ := domainutil.Parse("cag.lu")
+	trig := Observation{Source: SrcCloudean, Status: store.StatusAvailable}
+	if c := m.Confirm(context.Background(), d, &trig, false, false); c.Confirmed {
+		t.Fatal("off: lagging WHOIS must block")
+	}
+	c := m.Confirm(context.Background(), d, &trig, false, true)
+	if !c.Confirmed || !c.ByRegistrars {
+		t.Fatalf("cloudean + netim must confirm while WHOIS lags: %s", c.Summary())
+	}
+	// two web checkers without a registrar API are not enough
+	nt.avail, rg.status = false, store.StatusAvailable
+	if c := m.Confirm(context.Background(), d, &trig, false, true); c.Confirmed {
+		t.Fatalf("needs a registrar API among the agreeing sources: %s", c.Summary())
+	}
+	// WHOIS "registered" (someone owns it) always vetoes
+	nt.avail = true
+	whoisAnswer = `{"code":0,"msg":"ok","data":{"registered":true,"status":[{"text":"Active"}]}}`
+	if c := m.Confirm(context.Background(), d, &trig, false, true); c.Confirmed {
+		t.Fatal("WHOIS registered must veto")
 	}
 }
